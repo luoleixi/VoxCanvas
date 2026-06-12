@@ -53,11 +53,11 @@ type classifyResult struct {
 func (c *RealClient) Classify(sentence string) (bool, string, error) {
 	sysPrompt := `你是一个语音绘图工具的指令分类器。用户通过语音输入文本，你需要判断文本是指令(order)还是需求(requirement)。
 
-- order: 用户要求执行操作，如"生成图片"、"画一个圆"、"绘制"
-- requirement: 用户描述想要的内容，如"红色的"、"一只猫"、"背景是蓝色"
+- order: 仅当用户**纯粹**表达"生成图片"意图，且句中**不带任何具体内容名词**（如物体、颜色、场景、风格等）时，才返回 order。例如"生成图片"、"画图"、"开始画"、"创建图片"、"帮我画一张"、"画出来吧"属于 order。content 固定为"生成图片"。
+- requirement: 只要句中携带了具体绘制内容，无论是否包含"画"字，一律归为 requirement。例如"我想画一朵花"、"画只猫"、"红色的"、"蓝天白云"属于 requirement。
 
 请严格只输出一行JSON，不要用markdown代码块包裹：
-{"op":"order", "content":"<原句或精简的指令>"}
+{"op":"order", "content":"生成图片"}
 或
 {"op":"requirement", "content":"<原句>"}`
 
@@ -254,7 +254,7 @@ func (g *RealGenerator) Generate(prompt string) (string, error) {
 			NegativePrompt: "低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，过度光滑，画面具有AI感。构图混乱。文字模糊，扭曲。",
 			PromptExtend:   true,
 			Watermark:      false,
-			Size:           "2048*2048",
+			Size:           "1280*720",
 		},
 	}
 
