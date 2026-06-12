@@ -6,6 +6,7 @@ After=network.target
 Type=simple
 WorkingDirectory=/opt/voxcanvas/backend
 Environment=PORT=6060
+EnvironmentFile=-/etc/voxcanvas/backend.env
 ExecStart=/opt/voxcanvas/backend/voxcanvas-backend
 Restart=always
 RestartSec=3
