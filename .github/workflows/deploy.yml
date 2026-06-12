@@ -6,141 +6,157 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: deploy-main
   cancel-in-progress: true
 
 jobs:
   deploy:
-    runs-on: ubuntu-22.04
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Package source
-        run: git archive --format=tar.gz --output=voxcanvas-source.tar.gz HEAD
-
-      - name: Configure SSH key
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
-
-      - name: Upload source package
+      - name: Download source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REF_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          mkdir -p ~/.ssh
-          ssh-keyscan -p "${{ secrets.SERVER_PORT || 22 }}" "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
-          ssh -p "${{ secrets.SERVER_PORT || 22 }}" "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
-            'set -euo pipefail; rm -rf /tmp/voxcanvas-source-upload; install -d -m 755 /tmp/voxcanvas-source-upload'
+
+          SOURCE_ARCHIVE="/tmp/voxcanvas-source.tar.gz"
+          SOURCE_DIR="/tmp/voxcanvas-source"
+
+          rm -rf "$SOURCE_ARCHIVE" "$SOURCE_DIR"
+          install -d -m 755 "$SOURCE_DIR"
+
           for attempt in 1 2 3; do
-            if scp -P "${{ secrets.SERVER_PORT || 22 }}" voxcanvas-source.tar.gz \
-              "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/voxcanvas-source-upload/voxcanvas-source.tar.gz"; then
-              exit 0
+            echo "Source download attempt ${attempt}/3"
+            if curl -fL \
+              --connect-timeout 30 \
+              --retry 3 \
+              --retry-delay 5 \
+              --retry-all-errors \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPOSITORY}/tarball/${REF_SHA}" \
+              -o "$SOURCE_ARCHIVE"; then
+              break
             fi
-            sleep $((attempt * 5))
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "Failed to download source archive."
+              exit 1
+            fi
+            sleep $((attempt * 10))
           done
-          exit 1
 
-      - name: Build and deploy on server
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          password: ${{ secrets.SERVER_PASSWORD }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
-          script_stop: true
-          script: |
-            set -euo pipefail
+          tar -xzf "$SOURCE_ARCHIVE" -C "$SOURCE_DIR" --strip-components=1
 
-            SOURCE_ARCHIVE="/tmp/voxcanvas-source-upload/voxcanvas-source.tar.gz"
-            SOURCE_DIR="/tmp/voxcanvas-source"
-            BUILD_DIR="/tmp/voxcanvas-build"
-            GO_VERSION="1.25.0"
-            export GOTOOLCHAIN="local"
-            export GOPROXY="https://goproxy.cn,direct"
-            export GOCACHE="/opt/voxcanvas/.cache/go-build"
-            export GOMODCACHE="/opt/voxcanvas/.cache/go-mod"
-            export npm_config_cache="/opt/voxcanvas/.cache/npm"
+      - name: Build and deploy
+        run: |
+          set -euo pipefail
 
-            for apt_source in /etc/apt/sources.list.d/docker.list /etc/apt/sources.list.d/docker.sources; do
-              if [ -f "$apt_source" ] && grep -q "download.docker.com/linux/ubuntu" "$apt_source"; then
-                mv "$apt_source" "$apt_source.disabled"
-              fi
-            done
+          SOURCE_DIR="/tmp/voxcanvas-source"
+          BUILD_DIR="/tmp/voxcanvas-build"
+          GO_VERSION="1.25.0"
+          SUDO=""
+          export GOTOOLCHAIN="local"
+          export GOPROXY="https://goproxy.cn,direct"
+          export GOCACHE="/tmp/voxcanvas-cache/go-build"
+          export GOMODCACHE="/tmp/voxcanvas-cache/go-mod"
+          export npm_config_cache="/tmp/voxcanvas-cache/npm"
 
-            missing_packages=""
-            for package in ca-certificates curl git nginx; do
-              if ! dpkg -s "$package" >/dev/null 2>&1; then
-                missing_packages="$missing_packages $package"
-              fi
-            done
-            if [ -n "$missing_packages" ]; then
-              apt-get update
-              DEBIAN_FRONTEND=noninteractive apt-get install -y $missing_packages
+          if [ "$(id -u)" -ne 0 ]; then
+            if command -v sudo >/dev/null 2>&1 && sudo -n true; then
+              SUDO="sudo -n"
+            else
+              echo "This self-hosted runner must run as root or have passwordless sudo."
+              exit 1
             fi
+          fi
 
-            if ! command -v go >/dev/null 2>&1 || ! go version | grep -q "go${GO_VERSION}"; then
-              curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz \
-                || curl -fsSL "https://golang.google.cn/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
-              rm -rf /usr/local/go
-              tar -C /usr/local -xzf /tmp/go.tar.gz
-              ln -sfn /usr/local/go/bin/go /usr/local/bin/go
-              ln -sfn /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+          for apt_source in /etc/apt/sources.list.d/docker.list /etc/apt/sources.list.d/docker.sources; do
+            if [ -f "$apt_source" ] && grep -q "download.docker.com/linux/ubuntu" "$apt_source"; then
+              $SUDO mv "$apt_source" "$apt_source.disabled"
             fi
+          done
 
-            if ! command -v node >/dev/null 2>&1 || ! node --version | grep -q '^v20\.'; then
-              dpkg --configure -a || true
-              DEBIAN_FRONTEND=noninteractive apt-get remove -y nodejs npm libnode-dev libnode72 || true
-              DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true
-              curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-              DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
-              node --version | grep -q '^v20\.'
+          missing_packages=""
+          for package in ca-certificates curl nginx; do
+            if ! dpkg -s "$package" >/dev/null 2>&1; then
+              missing_packages="$missing_packages $package"
             fi
+          done
+          if [ -n "$missing_packages" ]; then
+            $SUDO apt-get update
+            $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y $missing_packages
+          fi
 
-            test -f "$SOURCE_ARCHIVE"
-            rm -rf "$SOURCE_DIR" "$BUILD_DIR"
-            install -d -m 755 "$SOURCE_DIR" "$BUILD_DIR/backend" "$BUILD_DIR/frontend"
-            install -d -m 755 "$GOCACHE" "$GOMODCACHE" "$npm_config_cache"
-            tar -xzf "$SOURCE_ARCHIVE" -C "$SOURCE_DIR"
+          if ! command -v go >/dev/null 2>&1 || ! go version | grep -q "go${GO_VERSION}"; then
+            curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz \
+              || curl -fsSL "https://golang.google.cn/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
+            $SUDO rm -rf /usr/local/go
+            $SUDO tar -C /usr/local -xzf /tmp/go.tar.gz
+            $SUDO ln -sfn /usr/local/go/bin/go /usr/local/bin/go
+            $SUDO ln -sfn /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+          fi
 
-            cd "$SOURCE_DIR/backend"
-            go test ./...
-            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$BUILD_DIR/backend/voxcanvas-backend" .
+          if ! command -v node >/dev/null 2>&1 || ! node --version | grep -q '^v20\.'; then
+            $SUDO dpkg --configure -a || true
+            $SUDO env DEBIAN_FRONTEND=noninteractive apt-get remove -y nodejs npm libnode-dev libnode72 || true
+            $SUDO env DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true
+            curl -fsSL https://deb.nodesource.com/setup_20.x | $SUDO bash -
+            $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
+            node --version | grep -q '^v20\.'
+          fi
 
-            cd "$SOURCE_DIR/frontend"
-            npm ci --prefer-offline --no-audit --no-fund
-            npm run build
-            cp -R dist/. "$BUILD_DIR/frontend/"
+          rm -rf "$BUILD_DIR"
+          install -d -m 755 "$BUILD_DIR/backend" "$BUILD_DIR/frontend"
+          install -d -m 755 "$GOCACHE" "$GOMODCACHE" "$npm_config_cache"
 
-            test -f /root/card/certificate.crt
-            test -f /root/card/ca_bundle.crt
-            test -f /root/card/private.key
-            cat /root/card/certificate.crt /root/card/ca_bundle.crt > /root/card/fullchain.crt
-            chmod 600 /root/card/private.key
-            chmod 644 /root/card/fullchain.crt
+          cd "$SOURCE_DIR/backend"
+          go test ./...
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$BUILD_DIR/backend/voxcanvas-backend" .
 
-            install -d -m 755 /opt/voxcanvas/backend
-            install -d -m 755 /var/www/voxcanvas
-            install -d -m 700 /etc/voxcanvas
-            touch /etc/voxcanvas/backend.env
-            chmod 600 /etc/voxcanvas/backend.env
+          cd "$SOURCE_DIR/frontend"
+          npm ci --prefer-offline --no-audit --no-fund
+          npm run build
+          cp -R dist/. "$BUILD_DIR/frontend/"
 
-            install -m 755 "$BUILD_DIR/backend/voxcanvas-backend" /opt/voxcanvas/backend/voxcanvas-backend
-            rm -rf /var/www/voxcanvas/*
-            cp -R "$BUILD_DIR/frontend/." /var/www/voxcanvas/
+          $SUDO test -f /root/card/certificate.crt
+          $SUDO test -f /root/card/ca_bundle.crt
+          $SUDO test -f /root/card/private.key
+          $SUDO sh -c 'cat /root/card/certificate.crt /root/card/ca_bundle.crt > /root/card/fullchain.crt'
+          $SUDO chmod 600 /root/card/private.key
+          $SUDO chmod 644 /root/card/fullchain.crt
 
-            install -m 644 "$SOURCE_DIR/deploy/systemd/voxcanvas-backend.service" /etc/systemd/system/voxcanvas-backend.service
-            install -m 644 "$SOURCE_DIR/deploy/nginx/voxcanvas.conf" /etc/nginx/sites-available/voxcanvas
-            ln -sfn /etc/nginx/sites-available/voxcanvas /etc/nginx/sites-enabled/voxcanvas
-            rm -f /etc/nginx/sites-enabled/default
+          $SUDO install -d -m 755 /opt/voxcanvas/backend
+          $SUDO install -d -m 755 /var/www/voxcanvas
+          $SUDO install -d -m 700 /etc/voxcanvas
+          $SUDO touch /etc/voxcanvas/backend.env
+          $SUDO chmod 600 /etc/voxcanvas/backend.env
 
-            systemctl daemon-reload
-            systemctl enable voxcanvas-backend
-            systemctl restart voxcanvas-backend
-            nginx -t
-            systemctl enable nginx
-            systemctl restart nginx
+          $SUDO install -m 755 "$BUILD_DIR/backend/voxcanvas-backend" /opt/voxcanvas/backend/voxcanvas-backend
+          $SUDO rm -rf /var/www/voxcanvas/*
+          $SUDO cp -R "$BUILD_DIR/frontend/." /var/www/voxcanvas/
 
-            curl -fsS http://127.0.0.1:6060/health
-            curl -fsS https://127.0.0.1/health --insecure
+          $SUDO install -m 644 "$SOURCE_DIR/deploy/systemd/voxcanvas-backend.service" /etc/systemd/system/voxcanvas-backend.service
+          $SUDO install -m 644 "$SOURCE_DIR/deploy/nginx/voxcanvas.conf" /etc/nginx/sites-available/voxcanvas
+          $SUDO ln -sfn /etc/nginx/sites-available/voxcanvas /etc/nginx/sites-enabled/voxcanvas
+          $SUDO rm -f /etc/nginx/sites-enabled/default
+
+          $SUDO systemctl daemon-reload
+          $SUDO systemctl enable voxcanvas-backend
+          $SUDO systemctl restart voxcanvas-backend
+          $SUDO nginx -t
+          $SUDO systemctl enable nginx
+          $SUDO systemctl restart nginx
+
+          curl -fsS http://127.0.0.1:6060/health
+          curl -fsS https://127.0.0.1/health --insecure
