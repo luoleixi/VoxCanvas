@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>AI 语音断句测试 Demo</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; line-height: 1.6; }
+        .control-panel { margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; border-radius: 5px; border: none; color: white; font-weight: bold; }
+        #startBtn { background: #007bff; }
+        #stopBtn { background: #dc3545; }
+        button:disabled { background: #6c757d; cursor: not-allowed; }
+        #status { display: inline-block; margin-left: 15px; font-weight: bold; }
+        .listening { color: #28a745; }
+        
+        .box { border: 1px solid #ccc; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        #interim-box { background: #fff3cd; color: #856404; min-height: 24px; font-style: italic; }
+        #final-box { background: #f4f6f9; min-height: 300px; max-height: 500px; overflow-y: auto; }
+        
+        .log-item { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed #ccc; }
+        .log-badge { display: inline-block; background: #28a745; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; margin-right: 8px; }
+    </style>
+</head>
+<body>
+    <h2>🎙️ 纯语音交互断句 Demo</h2>
+    
+    <div class="control-panel">
+        <button id="startBtn">启动语音监听</button>
+        <button id="stopBtn" disabled>停止</button>
+        <div id="status">状态：未启动</div>
+    </div>
+
+    <h3>正在听 (实时预览，用于给用户 UI 反馈)</h3>
+    <div class="box" id="interim-box">等你说话...</div>
+
+    <h3>已打包的完整指令 (触发 isFinal，打包发给 LLM)</h3>
+    <div class="box" id="final-box"></div>
+
+    <script>
+        // 1. 兼容性检查
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            alert("当前浏览器不支持 Web Speech API，请使用 Chrome 浏览器！");
+        }
+
+        // 2. 初始化语音识别实例
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;      // 关键设置：保持持续监听，不要说完一句就死掉
+        recognition.interimResults = true;  // 关键设置：允许返回中间结果（实时反馈）
+        recognition.lang = 'zh-CN';         // 识别中文
+
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const statusDiv = document.getElementById('status');
+        const interimBox = document.getElementById('interim-box');
+        const finalBox = document.getElementById('final-box');
+
+        let isManuallyStopped = false; // 用于标记是否是用户手动点击停止
+
+        // 3. 事件监听：开始
+        recognition.onstart = function() {
+            statusDiv.textContent = "状态：正在监听中... (请试着说话并停顿1-2秒)";
+            statusDiv.classList.add('listening');
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            isManuallyStopped = false;
+            interimBox.textContent = "";
+        };
+
+        // 4. 事件监听：处理识别结果（核心逻辑）
+        recognition.onresult = function(event) {
+            let interimTranscript = '';
+            let finalTranscript = '';
+
+            // 遍历所有返回的识别结果
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                // 如果系统判断这句话说完了（通常是检测到明显的静音停顿）
+                if (event.results[i].isFinal) {
+                    finalTranscript += event.results[i][0].transcript;
+                } else {
+                    // 如果还没说完，只更新实时文字
+                    interimTranscript += event.results[i][0].transcript;
+                }
+            }
+
+            // 更新实时预览区
+            interimBox.textContent = interimTranscript;
+
+            // 如果拿到了完整的一句话，模拟发送给大模型
+            if (finalTranscript.trim() !== '') {
+                console.log("【触发 isFinal!】准备发送给 LLM:", finalTranscript);
+
+                // 在界面上生成一条记录
+                const logItem = document.createElement('div');
+                logItem.className = 'log-item';
+                logItem.innerHTML = `
+                    <span class="log-badge">触发断句</span> 
+                    <strong>${finalTranscript}</strong> 
+                    <br>
+                    <span style="color:#0056b3; font-size: 0.9em; margin-top:5px; display:inline-block;">
+                        ➔ JSON 打包，正在请求大模型...
+                    </span>`;
+                
+                // 新记录插到最前面
+                finalBox.prepend(logItem); 
+            }
+        };
+
+        // 5. 事件监听：错误处理
+        recognition.onerror = function(event) {
+            console.error("语音识别错误:", event.error);
+            if (event.error === 'not-allowed') {
+                statusDiv.textContent = "状态：麦克风权限被拒绝";
+                statusDiv.classList.remove('listening');
+                startBtn.disabled = false;
+            }
+        };
+
+        // 6. 事件监听：结束（处理 Chrome 语音 API 自动断开的坑）
+        recognition.onend = function() {
+            if (!isManuallyStopped) {
+                // 核心技巧：如果不是用户手动停止，说明是 API 因为长时间没声音自动休眠了
+                // 我们在这里静默重启它，实现真正的“全程一直听”
+                console.log("引擎自动休眠，正在静默重启...");
+                try {
+                    recognition.start();
+                } catch(e) {}
+            } else {
+                statusDiv.textContent = "状态：已手动停止";
+                statusDiv.classList.remove('listening');
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                interimBox.textContent = "等你说话...";
+            }
+        };
+
+        // 绑定按钮事件
+        startBtn.onclick = () => recognition.start();
+        stopBtn.onclick = () => {
+            isManuallyStopped = true;
+            recognition.stop();
+        };
+    </script>
+</body>
+</html>
