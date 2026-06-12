@@ -55,6 +55,9 @@ jobs:
           cp deploy/nginx/voxcanvas.conf release/deploy/voxcanvas.conf
           cp deploy/systemd/voxcanvas-backend.service release/deploy/voxcanvas-backend.service
 
+      - name: Package release
+        run: tar -czf voxcanvas-release.tar.gz -C release .
+
       - name: Upload release to server
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -62,10 +65,9 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
           port: ${{ secrets.SERVER_PORT || 22 }}
-          source: release/*
-          target: /tmp/voxcanvas-release
+          source: voxcanvas-release.tar.gz
+          target: /tmp/voxcanvas-upload
           rm: true
-          strip_components: 1
 
       - name: Deploy on server
         uses: appleboy/ssh-action@v1.0.3
@@ -77,6 +79,10 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
+
+            rm -rf /tmp/voxcanvas-release
+            mkdir -p /tmp/voxcanvas-release
+            tar -xzf /tmp/voxcanvas-upload/voxcanvas-release.tar.gz -C /tmp/voxcanvas-release
 
             if ! command -v nginx >/dev/null 2>&1; then
               apt-get update
