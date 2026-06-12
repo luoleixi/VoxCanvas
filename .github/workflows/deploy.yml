@@ -102,5 +102,5 @@ jobs:
             systemctl enable nginx
             systemctl restart nginx
 
-            curl -fsS http://127.0.0.1:6060/healthz
-            curl -fsS http://127.0.0.1/healthz
+            curl -fsS http://127.0.0.1:6060/health
+            curl -fsS http://127.0.0.1/health
