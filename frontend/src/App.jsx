@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { Mic, RadioTower, Sparkles, Loader2 } from 'lucide-react';
 import './styles.css';
 
-const VOICE_ENDPOINT = import.meta.env.VITE_VOICE_ENDPOINT || 'http://localhost:8080/api/voice';
+const VOICE_ENDPOINT = import.meta.env.VITE_VOICE_ENDPOINT || '/api/voice';
 const RESTART_DELAY_MS = 350;
 
 function normalizeImageSource(content) {

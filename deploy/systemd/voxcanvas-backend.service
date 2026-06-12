@@ -1,0 +1,14 @@
+[Unit]
+Description=VoxCanvas backend service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/voxcanvas/backend
+Environment=PORT=6060
+ExecStart=/opt/voxcanvas/backend/voxcanvas-backend
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

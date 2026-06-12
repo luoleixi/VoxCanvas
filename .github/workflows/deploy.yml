@@ -1,0 +1,104 @@
+name: Deploy VoxCanvas
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: false
+
+      - name: Test backend
+        working-directory: backend
+        run: go test ./...
+
+      - name: Build backend
+        working-directory: backend
+        run: |
+          mkdir -p ../release/backend
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../release/backend/voxcanvas-backend .
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+          mkdir -p ../release/frontend
+          cp -R dist/. ../release/frontend/
+
+      - name: Add deployment files
+        run: |
+          mkdir -p release/deploy
+          cp deploy/nginx/voxcanvas.conf release/deploy/voxcanvas.conf
+          cp deploy/systemd/voxcanvas-backend.service release/deploy/voxcanvas-backend.service
+
+      - name: Upload release to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          source: release/*
+          target: /tmp/voxcanvas-release
+          rm: true
+          strip_components: 1
+
+      - name: Deploy on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            if ! command -v nginx >/dev/null 2>&1; then
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
+            fi
+
+            install -d -m 755 /opt/voxcanvas/backend
+            install -d -m 755 /var/www/voxcanvas
+
+            install -m 755 /tmp/voxcanvas-release/backend/voxcanvas-backend /opt/voxcanvas/backend/voxcanvas-backend
+            rm -rf /var/www/voxcanvas/*
+            cp -R /tmp/voxcanvas-release/frontend/. /var/www/voxcanvas/
+
+            install -m 644 /tmp/voxcanvas-release/deploy/voxcanvas-backend.service /etc/systemd/system/voxcanvas-backend.service
+            install -m 644 /tmp/voxcanvas-release/deploy/voxcanvas.conf /etc/nginx/sites-available/voxcanvas
+            ln -sfn /etc/nginx/sites-available/voxcanvas /etc/nginx/sites-enabled/voxcanvas
+            rm -f /etc/nginx/sites-enabled/default
+
+            systemctl daemon-reload
+            systemctl enable voxcanvas-backend
+            systemctl restart voxcanvas-backend
+            nginx -t
+            systemctl reload nginx
+
+            curl -fsS http://127.0.0.1:6060/healthz
