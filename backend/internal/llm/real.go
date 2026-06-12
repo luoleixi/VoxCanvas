@@ -2,6 +2,7 @@ package llm
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -182,9 +183,154 @@ func extractJSON(raw string) string {
 	return raw
 }
 
-// RealGenerator — DeepSeek 不支持生图，保留 stub
-type RealGenerator struct{}
+// RealGenerator — DashScope image generation
+type RealGenerator struct {
+	Endpoint string
+	APIKey   string
+	Model    string
+	client   *http.Client
+}
+
+func NewRealGenerator(endpoint, apiKey, model string) *RealGenerator {
+	return &RealGenerator{
+		Endpoint: strings.TrimRight(endpoint, "/"),
+		APIKey:   apiKey,
+		Model:    model,
+		client:   &http.Client{},
+	}
+}
+
+type imageGenMessage struct {
+	Role    string `json:"role"`
+	Content []imageGenContent `json:"content"`
+}
+
+type imageGenContent struct {
+	Text  string `json:"text,omitempty"`
+	Image string `json:"image,omitempty"`
+}
+
+type imageGenInput struct {
+	Messages []imageGenMessage `json:"messages"`
+}
+
+type imageGenParams struct {
+	NegativePrompt string `json:"negative_prompt"`
+	PromptExtend   bool   `json:"prompt_extend"`
+	Watermark      bool   `json:"watermark"`
+	Size           string `json:"size"`
+}
+
+type imageGenRequest struct {
+	Model      string         `json:"model"`
+	Input      imageGenInput  `json:"input"`
+	Parameters imageGenParams `json:"parameters"`
+}
+
+type imageGenResponse struct {
+	Output struct {
+		Choices []struct {
+			Message struct {
+				Content []imageGenContent `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	} `json:"output"`
+}
 
 func (g *RealGenerator) Generate(prompt string) (string, error) {
-	return "", errors.New("image generation requires a separate image API (e.g. DALL-E, Stable Diffusion)")
+	reqBody := imageGenRequest{
+		Model: g.Model,
+		Input: imageGenInput{
+			Messages: []imageGenMessage{
+				{
+					Role: "user",
+					Content: []imageGenContent{
+						{Text: prompt},
+					},
+				},
+			},
+		},
+		Parameters: imageGenParams{
+			NegativePrompt: "低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，过度光滑，画面具有AI感。构图混乱。文字模糊，扭曲。",
+			PromptExtend:   true,
+			Watermark:      false,
+			Size:           "2048*2048",
+		},
+	}
+
+	b, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", err
+	}
+
+	url := g.Endpoint + "/api/v1/services/aigc/multimodal-generation/generation"
+	log.Printf("[IMAGE] request -> %s model=%s prompt=%s", url, g.Model, truncate(prompt, 200))
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(b))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+g.APIKey)
+
+	resp, err := g.client.Do(req)
+	if err != nil {
+		log.Printf("[IMAGE] request error: %v", err)
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	log.Printf("[IMAGE] response <- status=%d body=%s", resp.StatusCode, truncate(string(body), 500))
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("dashscope api error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var ir imageGenResponse
+	if err := json.Unmarshal(body, &ir); err != nil {
+		return "", err
+	}
+
+	if len(ir.Output.Choices) == 0 || len(ir.Output.Choices[0].Message.Content) == 0 {
+		return "", errors.New("dashscope returned empty image")
+	}
+
+	img := ir.Output.Choices[0].Message.Content[0].Image
+	if img == "" {
+		return "", errors.New("dashscope returned empty image URL")
+	}
+
+	// if image is a URL, download it; if already base64, return directly
+	if strings.HasPrefix(img, "data:") {
+		return "base64:" + img, nil
+	}
+	if strings.HasPrefix(img, "http") {
+		b64, err := downloadImage(g.client, img)
+		if err != nil {
+			return "", fmt.Errorf("download image: %w", err)
+		}
+		return "base64:" + b64, nil
+	}
+
+	return "base64:" + img, nil
+}
+
+func downloadImage(client *http.Client, url string) (string, error) {
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(data), nil
 }
