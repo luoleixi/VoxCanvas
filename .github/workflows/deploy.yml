@@ -15,6 +15,33 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Package source
+        run: git archive --format=tar.gz --output=voxcanvas-source.tar.gz HEAD
+
+      - name: Configure SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+
+      - name: Upload source package
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${{ secrets.SERVER_PORT || 22 }}" "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+          ssh -p "${{ secrets.SERVER_PORT || 22 }}" "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
+            'set -euo pipefail; rm -rf /tmp/voxcanvas-source-upload; install -d -m 755 /tmp/voxcanvas-source-upload'
+          for attempt in 1 2 3; do
+            if scp -P "${{ secrets.SERVER_PORT || 22 }}" voxcanvas-source.tar.gz \
+              "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/voxcanvas-source-upload/voxcanvas-source.tar.gz"; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          exit 1
+
       - name: Build and deploy on server
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -26,11 +53,9 @@ jobs:
           script: |
             set -euo pipefail
 
-            REPO_URL="https://github.com/${{ github.repository }}.git"
-            REPO_DIR="/opt/voxcanvas/repo"
+            SOURCE_ARCHIVE="/tmp/voxcanvas-source-upload/voxcanvas-source.tar.gz"
+            SOURCE_DIR="/tmp/voxcanvas-source"
             BUILD_DIR="/tmp/voxcanvas-build"
-            DEPLOY_SHA="${{ github.sha }}"
-            DEPLOY_REF="${{ github.ref_name }}"
             GO_VERSION="1.22.12"
             export GOCACHE="/opt/voxcanvas/.cache/go-build"
             export GOMODCACHE="/opt/voxcanvas/.cache/go-mod"
@@ -71,26 +96,17 @@ jobs:
               node --version | grep -q '^v20\.'
             fi
 
-            if [ ! -d "$REPO_DIR/.git" ]; then
-              rm -rf "$REPO_DIR"
-              git clone --depth 1 --branch "$DEPLOY_REF" "$REPO_URL" "$REPO_DIR"
-            fi
-
-            cd "$REPO_DIR"
-            git remote set-url origin "$REPO_URL"
-            git fetch --depth 1 origin "$DEPLOY_REF"
-            git checkout --force "$DEPLOY_SHA"
-            git clean -fd
-
-            rm -rf "$BUILD_DIR"
-            install -d -m 755 "$BUILD_DIR/backend" "$BUILD_DIR/frontend"
+            test -f "$SOURCE_ARCHIVE"
+            rm -rf "$SOURCE_DIR" "$BUILD_DIR"
+            install -d -m 755 "$SOURCE_DIR" "$BUILD_DIR/backend" "$BUILD_DIR/frontend"
             install -d -m 755 "$GOCACHE" "$GOMODCACHE" "$npm_config_cache"
+            tar -xzf "$SOURCE_ARCHIVE" -C "$SOURCE_DIR"
 
-            cd "$REPO_DIR/backend"
+            cd "$SOURCE_DIR/backend"
             go test ./...
             CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$BUILD_DIR/backend/voxcanvas-backend" .
 
-            cd "$REPO_DIR/frontend"
+            cd "$SOURCE_DIR/frontend"
             npm ci --prefer-offline --no-audit --no-fund
             npm run build
             cp -R dist/. "$BUILD_DIR/frontend/"
@@ -112,8 +128,8 @@ jobs:
             rm -rf /var/www/voxcanvas/*
             cp -R "$BUILD_DIR/frontend/." /var/www/voxcanvas/
 
-            install -m 644 "$REPO_DIR/deploy/systemd/voxcanvas-backend.service" /etc/systemd/system/voxcanvas-backend.service
-            install -m 644 "$REPO_DIR/deploy/nginx/voxcanvas.conf" /etc/nginx/sites-available/voxcanvas
+            install -m 644 "$SOURCE_DIR/deploy/systemd/voxcanvas-backend.service" /etc/systemd/system/voxcanvas-backend.service
+            install -m 644 "$SOURCE_DIR/deploy/nginx/voxcanvas.conf" /etc/nginx/sites-available/voxcanvas
             ln -sfn /etc/nginx/sites-available/voxcanvas /etc/nginx/sites-enabled/voxcanvas
             rm -f /etc/nginx/sites-enabled/default
 
