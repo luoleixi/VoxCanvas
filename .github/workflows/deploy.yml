@@ -89,6 +89,13 @@ jobs:
               DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
             fi
 
+            test -f /root/card/certificate.crt
+            test -f /root/card/ca_bundle.crt
+            test -f /root/card/private.key
+            cat /root/card/certificate.crt /root/card/ca_bundle.crt > /root/card/fullchain.crt
+            chmod 600 /root/card/private.key
+            chmod 644 /root/card/fullchain.crt
+
             install -d -m 755 /opt/voxcanvas/backend
             install -d -m 755 /var/www/voxcanvas
 
@@ -109,4 +116,4 @@ jobs:
             systemctl restart nginx
 
             curl -fsS http://127.0.0.1:6060/health
-            curl -fsS http://127.0.0.1/health
+            curl -fsS https://127.0.0.1/health --insecure
