@@ -1,9 +1,22 @@
 :root {
-  color: #172033;
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  background: #f5f7fb;
+  /* 核心主题色：紫蓝 AI 渐变 */
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --accent: #ec4899;
+  --gradient-ai: linear-gradient(135deg, var(--primary), var(--accent));
+  
+  /* 文本色 */
+  --text-main: #1e293b;
+  --text-muted: #64748b;
+  
+  /* 玻璃拟物化材质 */
+  --glass-bg: rgba(255, 255, 255, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.8);
+  --glass-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.08);
+  --inner-glow: inset 0 1px 1px rgba(255, 255, 255, 0.9);
+  
+  /* 画布背景色 */
+  --bg-app: #f1f5f9;
 }
 
 * {
@@ -12,42 +25,302 @@
 
 body {
   margin: 0;
+  color: var(--text-main);
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background: var(--bg-app);
+  overflow-x: hidden;
 }
 
-.app-shell {
+/* 渐变氛围光晕 */
+.bg-glow {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(100px);
+  z-index: -1;
+  opacity: 0.5;
+  animation: float 10s ease-in-out infinite;
+}
+
+.blob-1 {
+  top: -10%;
+  left: -10%;
+  width: 50vw;
+  height: 50vw;
+  background: rgba(99, 102, 241, 0.3);
+}
+
+.blob-2 {
+  bottom: -10%;
+  right: -10%;
+  width: 60vw;
+  height: 60vw;
+  background: rgba(236, 72, 153, 0.2);
+  animation-delay: -5s;
+}
+
+.voice-canvas {
+  position: relative;
   display: grid;
+  grid-template-columns: minmax(340px, 28vw) minmax(0, 1fr);
+  gap: 24px;
   min-height: 100vh;
+  padding: 24px;
+  z-index: 1;
+}
+
+.left-column {
+  display: grid;
+  grid-template-rows: minmax(280px, 40vh) minmax(320px, 1fr);
+  gap: 24px;
+  height: calc(100vh - 48px);
+}
+
+/* 统一的高级毛玻璃面板 */
+.glass-panel {
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  background: var(--glass-bg);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: var(--inner-glow), var(--glass-shadow);
+  display: flex;
+  flex-direction: column;
+}
+
+.listening-panel {
+  padding: 28px;
+}
+
+.listening-header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-height: 72px;
+}
+
+/* 麦克风重构：带涟漪动画 */
+.mic-orb {
+  position: relative;
+  display: grid;
+  flex: 0 0 68px;
+  width: 68px;
+  height: 68px;
   place-items: center;
-  padding: 32px;
-}
-
-.demo-panel {
-  width: min(100%, 560px);
-  border: 1px solid #dbe3f0;
-  border-radius: 8px;
-  padding: 40px;
+  border-radius: 50%;
+  color: var(--primary);
   background: #ffffff;
-  box-shadow: 0 18px 45px rgb(23 32 51 / 10%);
+  box-shadow: 0 8px 20px rgba(99, 102, 241, 0.15);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 2;
 }
 
-.eyebrow {
-  margin: 0 0 12px;
-  color: #1d6f8f;
-  font-size: 0.78rem;
+.mic-orb.listening {
+  color: #ffffff;
+  background: var(--gradient-ai);
+  transform: scale(1.05);
+  box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4);
+  animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+
+/* 波形图重构：AI渐变色 */
+.voice-meter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  opacity: 0.3;
+  transition: opacity 0.3s ease;
+}
+
+.voice-meter.active {
+  opacity: 1;
+}
+
+.voice-meter span {
+  display: block;
+  width: 4px;
+  height: 10px;
+  border-radius: 4px;
+  background: var(--gradient-ai);
+  transition: height 0.1s ease;
+}
+
+.voice-meter.active span {
+  animation: eq-wave 1s ease-in-out infinite alternate;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 24px 0 16px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.text-primary { color: var(--primary); }
+.text-accent { color: var(--accent); }
+
+/* 文本显示区域优化 */
+.transcript-box, .prompt-box {
+  flex: 1;
+  overflow-y: auto;
+  border-radius: 12px;
+  padding: 20px;
+  font-size: 1.05rem;
+  line-height: 1.8;
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.02);
+}
+
+.placeholder-text {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.prompt-panel {
+  padding: 28px;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  color: var(--text-main);
+  font-size: 0.9rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
-h1 {
-  margin: 0;
-  font-size: clamp(2rem, 8vw, 3.5rem);
-  line-height: 1;
+/* 绘图区域：精美阵列点阵背景 */
+.image-stage {
+  position: relative;
+  padding: 24px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  height: calc(100vh - 48px);
+  /* 细密点阵背景，比方格更有科技感 */
+  background-image: radial-gradient(rgba(100, 116, 139, 0.15) 1px, transparent 1px);
+  background-size: 20px 20px;
+  background-position: center center;
 }
 
-.summary {
-  margin: 20px 0 0;
-  color: #526072;
-  font-size: 1.05rem;
-  line-height: 1.6;
+.image-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 12px;
+  object-fit: contain;
+  box-shadow: 0 20px 60px -15px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+}
+
+/* AI 思考空状态：流光特效 */
+.thinking-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px;
+  background: rgba(255, 255, 255, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 24px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+}
+
+.gradient-text {
+  font-size: 2rem;
+  font-weight: 800;
+  background: var(--gradient-ai);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-size: 200% 200%;
+  animation: gradient-shift 3s ease infinite;
+}
+
+.thinking-subtext {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 1rem;
+}
+
+.spinner {
+  animation: spin 2s linear infinite;
+}
+
+/* ---------------- 动画定义 ---------------- */
+
+@keyframes float {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-20px) scale(1.05); }
+}
+
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.5); }
+  70% { box-shadow: 0 0 0 20px rgba(99, 102, 241, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+}
+
+@keyframes eq-wave {
+  0% { transform: scaleY(0.3); }
+  100% { transform: scaleY(3); }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.fade-in {
+  animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ---------------- 响应式 ---------------- */
+@media (max-width: 1024px) {
+  .voice-canvas {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+  .left-column {
+    height: auto;
+    grid-template-rows: auto auto;
+  }
+  .image-stage {
+    height: 60vh;
+    min-height: 400px;
+  }
+}
+
+@media (max-width: 600px) {
+  .voice-canvas {
+    padding: 16px;
+    gap: 16px;
+  }
+  .listening-header {
+    gap: 16px;
+  }
+  .mic-orb {
+    flex-basis: 56px;
+    width: 56px;
+    height: 56px;
+  }
 }
