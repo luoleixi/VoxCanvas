@@ -9,18 +9,30 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"voxcanvas/backend/internal/llm"
 	"voxcanvas/backend/internal/model"
 	"voxcanvas/backend/internal/router"
+	"voxcanvas/backend/internal/service"
 )
 
 func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-func TestHealthHandler(t *testing.T) {
-	r := router.Setup()
+func testSetup() *gin.Engine {
+	drawSvc := &service.DrawService{
+		Dev:        service.NewDevStore(),
+		Classifier: &llm.MockClassifier{},
+		Refiner:    &llm.MockRefiner{},
+		Generator:  &llm.MockGenerator{},
+	}
+	return router.Setup(drawSvc)
+}
 
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+func TestHealthHandler(t *testing.T) {
+	r := testSetup()
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -39,7 +51,7 @@ func TestHealthHandler(t *testing.T) {
 }
 
 func TestSessionStartHandler(t *testing.T) {
-	r := router.Setup()
+	r := testSetup()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/session/start", nil)
 	rec := httptest.NewRecorder()
@@ -74,7 +86,7 @@ func TestSessionStartHandler(t *testing.T) {
 }
 
 func TestDrawUnderstandHandler(t *testing.T) {
-	r := router.Setup()
+	r := testSetup()
 
 	body := `{"sentences":"画一只猫"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/draw/understand", strings.NewReader(body))
@@ -110,7 +122,7 @@ func TestDrawUnderstandHandler(t *testing.T) {
 }
 
 func TestDrawUnderstandHandlerInvalidBody(t *testing.T) {
-	r := router.Setup()
+	r := testSetup()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/draw/understand", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")

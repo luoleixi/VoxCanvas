@@ -26,10 +26,12 @@ type MockRefiner struct {
 
 func (m *MockRefiner) Refine(dev, newSentence string) (string, error) {
 	m.counter++
+	dev = strings.TrimPrefix(dev, "[mock] ")
+	dev = strings.TrimSpace(dev)
 	if dev == "" {
-		return fmt.Sprintf("[需求 %d] %s", m.counter, newSentence), nil
+		return fmt.Sprintf("[mock] %s", newSentence), nil
 	}
-	return dev + "\n" + fmt.Sprintf("[需求 %d] %s", m.counter, newSentence), nil
+	return fmt.Sprintf("[mock] %s；%s", dev, newSentence), nil
 }
 
 type MockGenerator struct{}

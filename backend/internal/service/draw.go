@@ -1,17 +1,19 @@
 package service
 
 import (
+	"log"
+
 	"voxcanvas/backend/internal/db"
 	"voxcanvas/backend/internal/llm"
 	"voxcanvas/backend/internal/model"
 )
 
 type DrawService struct {
-	Dev       *DevStore
+	Dev        *DevStore
 	Classifier llm.Classifier
 	Refiner    llm.Refiner
 	Generator  llm.Generator
-	DB        *db.DB
+	DB         *db.DB
 }
 
 func (s *DrawService) Handle(sentence string) (*model.DrawData, error) {
@@ -19,16 +21,33 @@ func (s *DrawService) Handle(sentence string) (*model.DrawData, error) {
 		s.DB.InsertSentence(sentence, "user_input")
 	}
 
-	isOrder, _, err := s.Classifier.Classify(sentence)
+	isOrder, content, err := s.Classifier.Classify(sentence)
 	if err != nil {
 		return nil, err
 	}
 
-	if isOrder {
+	if !isOrder {
+		refined, err := s.Dev.Append(sentence, s.Refiner)
+		if err != nil {
+			return nil, err
+		}
+		return &model.DrawData{
+			Op:      "requirement",
+			Content: refined,
+		}, nil
+	}
+
+	// "生成图片" triggers image generation, other orders return directly
+	if content == "生成图片" {
 		prompt := s.Dev.Get()
 		base64Img, err := s.Generator.Generate(prompt)
 		if err != nil {
-			return nil, err
+			log.Printf("[DRAW] image gen skipped: %v, return prompt as content", err)
+			s.Dev.Set("")
+			return &model.DrawData{
+				Op:      "order",
+				Content: "base64:placeholder," + prompt,
+			}, nil
 		}
 		if s.DB != nil {
 			s.DB.InsertImage(prompt, base64Img)
@@ -40,12 +59,8 @@ func (s *DrawService) Handle(sentence string) (*model.DrawData, error) {
 		}, nil
 	}
 
-	refined, err := s.Dev.Append(sentence, s.Refiner)
-	if err != nil {
-		return nil, err
-	}
 	return &model.DrawData{
-		Op:      "requirement",
-		Content: refined,
+		Op:      "order",
+		Content: content,
 	}, nil
 }

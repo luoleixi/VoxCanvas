@@ -6,9 +6,14 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"voxcanvas/backend/internal/model"
+	"voxcanvas/backend/internal/service"
 )
 
-func DrawUnderstand(c *gin.Context) {
+type DrawHandler struct {
+	Svc *service.DrawService
+}
+
+func (h *DrawHandler) Understand(c *gin.Context) {
 	var req model.DrawRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, model.Response{
@@ -19,12 +24,19 @@ func DrawUnderstand(c *gin.Context) {
 		return
 	}
 
+	data, err := h.Svc.Handle(req.Sentences)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.Response{
+			Code: 500,
+			Msg:  err.Error(),
+			Data: nil,
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, model.Response{
 		Code: 200,
 		Msg:  "success",
-		Data: model.DrawData{
-			Op:      "requirement",
-			Content: req.Sentences,
-		},
+		Data: data,
 	})
 }

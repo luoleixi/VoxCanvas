@@ -1,0 +1,118 @@
+Index: backend/go.mod
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>module voxcanvas/backend\r\n\r\ngo 1.25.0\r\n\r\nrequire github.com/gin-gonic/gin v1.12.0\r\n\r\nrequire (\r\n\tgithub.com/bytedance/gopkg v0.1.4 // indirect\r\n\tgithub.com/bytedance/sonic v1.15.2 // indirect\r\n\tgithub.com/bytedance/sonic/loader v0.5.1 // indirect\r\n\tgithub.com/cloudwego/base64x v0.1.7 // indirect\r\n\tgithub.com/gabriel-vasile/mimetype v1.4.13 // indirect\r\n\tgithub.com/gin-contrib/sse v1.1.1 // indirect\r\n\tgithub.com/go-playground/locales v0.14.1 // indirect\r\n\tgithub.com/go-playground/universal-translator v0.18.1 // indirect\r\n\tgithub.com/go-playground/validator/v10 v10.30.3 // indirect\r\n\tgithub.com/goccy/go-json v0.10.6 // indirect\r\n\tgithub.com/goccy/go-yaml v1.19.2 // indirect\r\n\tgithub.com/json-iterator/go v1.1.12 // indirect\r\n\tgithub.com/klauspost/cpuid/v2 v2.3.0 // indirect\r\n\tgithub.com/leodido/go-urn v1.4.0 // indirect\r\n\tgithub.com/mattn/go-isatty v0.0.22 // indirect\r\n\tgithub.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect\r\n\tgithub.com/modern-go/reflect2 v1.0.2 // indirect\r\n\tgithub.com/pelletier/go-toml/v2 v2.3.1 // indirect\r\n\tgithub.com/quic-go/qpack v0.6.0 // indirect\r\n\tgithub.com/quic-go/quic-go v0.60.0 // indirect\r\n\tgithub.com/twitchyliquid64/golang-asm v0.15.1 // indirect\r\n\tgithub.com/ugorji/go/codec v1.3.1 // indirect\r\n\tgo.mongodb.org/mongo-driver/v2 v2.6.0 // indirect\r\n\tgolang.org/x/arch v0.28.0 // indirect\r\n\tgolang.org/x/crypto v0.53.0 // indirect\r\n\tgolang.org/x/net v0.56.0 // indirect\r\n\tgolang.org/x/sys v0.46.0 // indirect\r\n\tgolang.org/x/text v0.38.0 // indirect\r\n\tgoogle.golang.org/protobuf v1.36.11 // indirect\r\n)\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/go.mod b/backend/go.mod
+--- a/backend/go.mod	(revision 6339ad7af482b8b1613d5a9a0b8654ff93238ece)
++++ b/backend/go.mod	(date 1781255081804)
+@@ -9,6 +9,7 @@
+ 	github.com/bytedance/sonic v1.15.2 // indirect
+ 	github.com/bytedance/sonic/loader v0.5.1 // indirect
+ 	github.com/cloudwego/base64x v0.1.7 // indirect
++	github.com/dustin/go-humanize v1.0.1 // indirect
+ 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
+ 	github.com/gin-contrib/sse v1.1.1 // indirect
+ 	github.com/go-playground/locales v0.14.1 // indirect
+@@ -16,15 +17,18 @@
+ 	github.com/go-playground/validator/v10 v10.30.3 // indirect
+ 	github.com/goccy/go-json v0.10.6 // indirect
+ 	github.com/goccy/go-yaml v1.19.2 // indirect
++	github.com/google/uuid v1.6.0 // indirect
+ 	github.com/json-iterator/go v1.1.12 // indirect
+ 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
+ 	github.com/leodido/go-urn v1.4.0 // indirect
+ 	github.com/mattn/go-isatty v0.0.22 // indirect
+ 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
+ 	github.com/modern-go/reflect2 v1.0.2 // indirect
++	github.com/ncruces/go-strftime v1.0.0 // indirect
+ 	github.com/pelletier/go-toml/v2 v2.3.1 // indirect
+ 	github.com/quic-go/qpack v0.6.0 // indirect
+ 	github.com/quic-go/quic-go v0.60.0 // indirect
++	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+ 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+ 	github.com/ugorji/go/codec v1.3.1 // indirect
+ 	go.mongodb.org/mongo-driver/v2 v2.6.0 // indirect
+@@ -34,4 +38,8 @@
+ 	golang.org/x/sys v0.46.0 // indirect
+ 	golang.org/x/text v0.38.0 // indirect
+ 	google.golang.org/protobuf v1.36.11 // indirect
++	modernc.org/libc v1.72.3 // indirect
++	modernc.org/mathutil v1.7.1 // indirect
++	modernc.org/memory v1.11.0 // indirect
++	modernc.org/sqlite v1.52.0 // indirect
+ )
+Index: backend/main.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package main\r\n\r\nimport (\r\n\t\"context\"\r\n\t\"log\"\r\n\t\"net/http\"\r\n\t\"os\"\r\n\t\"os/signal\"\r\n\t\"time\"\r\n\r\n\t\"voxcanvas/backend/internal/router\"\r\n)\r\n\r\nfunc main() {\r\n\tr := router.Setup()\r\n\r\n\taddr := \":\" + envOrDefault(\"PORT\", \"6060\")\r\n\tsrv := &http.Server{\r\n\t\tAddr:    addr,\r\n\t\tHandler: r,\r\n\t}\r\n\r\n\tgo func() {\r\n\t\tlog.Printf(\"VoxCanvas backend listening on %s\", addr)\r\n\t\tif err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {\r\n\t\t\tlog.Fatalf(\"listen: %s\\n\", err)\r\n\t\t}\r\n\t}()\r\n\r\n\tquit := make(chan os.Signal, 1)\r\n\tsignal.Notify(quit, os.Interrupt)\r\n\t<-quit\r\n\tlog.Println(\"Shutdown Server ...\")\r\n\r\n\tctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)\r\n\tdefer cancel()\r\n\tif err := srv.Shutdown(ctx); err != nil {\r\n\t\tlog.Fatal(\"Server Shutdown:\", err)\r\n\t}\r\n\tlog.Println(\"Server exited\")\r\n}\r\n\r\nfunc envOrDefault(key, fallback string) string {\r\n\tif value := os.Getenv(key); value != \"\" {\r\n\t\treturn value\r\n\t}\r\n\treturn fallback\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/main.go b/backend/main.go
+--- a/backend/main.go	(revision 6339ad7af482b8b1613d5a9a0b8654ff93238ece)
++++ b/backend/main.go	(date 1781255167743)
+@@ -8,11 +8,60 @@
+ 	"os/signal"
+ 	"time"
+ 
++	"voxcanvas/backend/internal/config"
++	"voxcanvas/backend/internal/db"
++	"voxcanvas/backend/internal/llm"
+ 	"voxcanvas/backend/internal/router"
++	"voxcanvas/backend/internal/service"
+ )
+ 
+ func main() {
+-	r := router.Setup()
++	cfg := config.Load()
++
++	database, err := db.Open("data")
++	if err != nil {
++		log.Fatalf("failed to open database: %v", err)
++	}
++	defer database.Close()
++
++	var (
++		classifier llm.Classifier
++		refiner    llm.Refiner
++		generator  llm.Generator
++	)
++
++	if cfg.LLMMode == "real" {
++		classifier = &llm.OpenAIClassifier{
++			Endpoint: cfg.LLMAPIURL,
++			APIKey:   cfg.LLMAPIKey,
++			Model:    cfg.LLMModel,
++		}
++		refiner = &llm.OpenAIRefiner{
++			Endpoint: cfg.LLMAPIURL,
++			APIKey:   cfg.LLMAPIKey,
++			Model:    cfg.LLMModel,
++		}
++		generator = &llm.OpenAIGenerator{
++			Endpoint: cfg.ImageAPIURL,
++			APIKey:   cfg.ImageAPIKey,
++			Model:    cfg.ImageModel,
++		}
++	} else {
++		classifier = &llm.MockClassifier{}
++		refiner = &llm.MockRefiner{}
++		generator = &llm.MockGenerator{}
++	}
++
++	devStore := service.NewDevStore()
++	drawSvc := &service.DrawService{
++		Dev:        devStore,
++		Classifier: classifier,
++		Refiner:    refiner,
++		Generator:  generator,
++		DB:         database,
++	}
++
++	r := router.Setup(drawSvc)
+ 
+ 	addr := ":" + envOrDefault("PORT", "6060")
+ 	srv := &http.Server{
