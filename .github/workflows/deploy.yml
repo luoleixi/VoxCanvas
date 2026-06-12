@@ -29,17 +29,59 @@ jobs:
       - name: Upload source package
         run: |
           set -euo pipefail
+          SSH_HOST="${{ secrets.SERVER_HOST }}"
+          SSH_PORT="${{ secrets.SERVER_PORT || 22 }}"
+          SSH_TARGET="${{ secrets.SERVER_USER }}@${SSH_HOST}"
+          REMOTE_UPLOAD_DIR="/tmp/voxcanvas-source-upload"
+
           mkdir -p ~/.ssh
-          ssh-keyscan -p "${{ secrets.SERVER_PORT || 22 }}" "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
-          ssh -p "${{ secrets.SERVER_PORT || 22 }}" "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
-            'set -euo pipefail; rm -rf /tmp/voxcanvas-source-upload; install -d -m 755 /tmp/voxcanvas-source-upload'
+          chmod 700 ~/.ssh
+          ssh-add -l -E sha256 || {
+            echo "No SSH identity was loaded. Check the SERVER_SSH_KEY secret."
+            exit 1
+          }
+
           for attempt in 1 2 3; do
-            if scp -P "${{ secrets.SERVER_PORT || 22 }}" voxcanvas-source.tar.gz \
-              "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/voxcanvas-source-upload/voxcanvas-source.tar.gz"; then
-              exit 0
+            if ssh-keyscan -T 20 -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "Failed to scan SSH host key for ${SSH_HOST}:${SSH_PORT}."
+              exit 1
             fi
             sleep $((attempt * 5))
           done
+          chmod 600 ~/.ssh/known_hosts
+
+          for attempt in 1 2 3; do
+            echo "Source upload attempt ${attempt}/3"
+            if ssh \
+              -p "$SSH_PORT" \
+              -o BatchMode=yes \
+              -o ConnectionAttempts=3 \
+              -o ConnectTimeout=60 \
+              -o PreferredAuthentications=publickey \
+              -o ServerAliveInterval=10 \
+              -o ServerAliveCountMax=3 \
+              "$SSH_TARGET" \
+              "set -euo pipefail; rm -rf '$REMOTE_UPLOAD_DIR'; install -d -m 755 '$REMOTE_UPLOAD_DIR'" \
+              && scp \
+                -P "$SSH_PORT" \
+                -o BatchMode=yes \
+                -o ConnectionAttempts=3 \
+                -o ConnectTimeout=60 \
+                -o PreferredAuthentications=publickey \
+                -o ServerAliveInterval=10 \
+                -o ServerAliveCountMax=3 \
+                voxcanvas-source.tar.gz \
+                "$SSH_TARGET:$REMOTE_UPLOAD_DIR/voxcanvas-source.tar.gz"; then
+              exit 0
+            fi
+            echo "Source upload attempt ${attempt}/3 failed."
+            sleep $((attempt * 5))
+          done
+
+          echo "Failed to upload source package after 3 attempts."
           exit 1
 
       - name: Build and deploy on server
