@@ -8,11 +8,49 @@ import (
 	"os/signal"
 	"time"
 
+	"voxcanvas/backend/internal/config"
+	"voxcanvas/backend/internal/db"
+	"voxcanvas/backend/internal/llm"
 	"voxcanvas/backend/internal/router"
+	"voxcanvas/backend/internal/service"
 )
 
 func main() {
-	r := router.Setup()
+	cfg := config.Load()
+
+	database, err := db.Open("data")
+	if err != nil {
+		log.Fatalf("failed to open database: %v", err)
+	}
+	defer database.Close()
+
+	var (
+		classifier llm.Classifier
+		refiner    llm.Refiner
+		generator  llm.Generator
+	)
+
+	if cfg.LLMMode == "real" {
+		client := llm.NewRealClient(cfg.LLMAPIURL, cfg.LLMAPIKey, cfg.LLMModel)
+		classifier = client
+		refiner = client
+		generator = &llm.RealGenerator{}
+	} else {
+		classifier = &llm.MockClassifier{}
+		refiner = &llm.MockRefiner{}
+		generator = &llm.MockGenerator{}
+	}
+
+	devStore := service.NewDevStore()
+	drawSvc := &service.DrawService{
+		Dev:        devStore,
+		Classifier: classifier,
+		Refiner:    refiner,
+		Generator:  generator,
+		DB:         database,
+	}
+
+	r := router.Setup(drawSvc)
 
 	addr := ":" + envOrDefault("PORT", "6060")
 	srv := &http.Server{
