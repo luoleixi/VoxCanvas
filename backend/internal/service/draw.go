@@ -46,7 +46,7 @@ func (s *DrawService) Handle(sentence string) (*model.DrawData, error) {
 			s.Dev.Set("")
 			return &model.DrawData{
 				Op:      "order",
-				Content: "base64:placeholder," + prompt,
+				Content: prompt,
 			}, nil
 		}
 		if s.DB != nil {
