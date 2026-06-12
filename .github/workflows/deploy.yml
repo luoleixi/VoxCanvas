@@ -56,7 +56,9 @@ jobs:
             SOURCE_ARCHIVE="/tmp/voxcanvas-source-upload/voxcanvas-source.tar.gz"
             SOURCE_DIR="/tmp/voxcanvas-source"
             BUILD_DIR="/tmp/voxcanvas-build"
-            GO_VERSION="1.22.12"
+            GO_VERSION="1.25.0"
+            export GOTOOLCHAIN="local"
+            export GOPROXY="https://goproxy.cn,direct"
             export GOCACHE="/opt/voxcanvas/.cache/go-build"
             export GOMODCACHE="/opt/voxcanvas/.cache/go-mod"
             export npm_config_cache="/opt/voxcanvas/.cache/npm"
@@ -78,7 +80,7 @@ jobs:
               DEBIAN_FRONTEND=noninteractive apt-get install -y $missing_packages
             fi
 
-            if ! command -v go >/dev/null 2>&1 || ! go version | grep -q "go1.22"; then
+            if ! command -v go >/dev/null 2>&1 || ! go version | grep -q "go${GO_VERSION}"; then
               curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz \
                 || curl -fsSL "https://golang.google.cn/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
               rm -rf /usr/local/go
