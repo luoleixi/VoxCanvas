@@ -1,0 +1,225 @@
+Index: backend/main_test.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package main\r\n\r\nimport (\r\n\t\"encoding/json\"\r\n\t\"net/http\"\r\n\t\"net/http/httptest\"\r\n\t\"strings\"\r\n\t\"testing\"\r\n\r\n\t\"github.com/gin-gonic/gin\"\r\n\r\n\t\"voxcanvas/backend/internal/model\"\r\n\t\"voxcanvas/backend/internal/router\"\r\n)\r\n\r\nfunc init() {\r\n\tgin.SetMode(gin.TestMode)\r\n}\r\n\r\nfunc TestHealthHandler(t *testing.T) {\r\n\tr := router.Setup()\r\n\r\n\treq := httptest.NewRequest(http.MethodGet, \"/healthz\", nil)\r\n\trec := httptest.NewRecorder()\r\n\tr.ServeHTTP(rec, req)\r\n\r\n\tif rec.Code != http.StatusOK {\r\n\t\tt.Fatalf(\"expected status 200, got %d\", rec.Code)\r\n\t}\r\n\r\n\tvar resp model.Response\r\n\tif err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {\r\n\t\tt.Fatalf(\"failed to unmarshal response: %v\", err)\r\n\t}\r\n\r\n\tif resp.Code != 200 {\r\n\t\tt.Fatalf(\"expected code 200, got %d\", resp.Code)\r\n\t}\r\n}\r\n\r\nfunc TestSessionStartHandler(t *testing.T) {\r\n\tr := router.Setup()\r\n\r\n\treq := httptest.NewRequest(http.MethodPost, \"/api/v1/session/start\", nil)\r\n\trec := httptest.NewRecorder()\r\n\tr.ServeHTTP(rec, req)\r\n\r\n\tif rec.Code != http.StatusOK {\r\n\t\tt.Fatalf(\"expected status 200, got %d\", rec.Code)\r\n\t}\r\n\r\n\tvar resp model.Response\r\n\tif err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {\r\n\t\tt.Fatalf(\"failed to unmarshal response: %v\", err)\r\n\t}\r\n\r\n\tif resp.Code != 200 {\r\n\t\tt.Fatalf(\"expected code 200, got %d\", resp.Code)\r\n\t}\r\n\r\n\tdata, ok := resp.Data.(map[string]interface{})\r\n\tif !ok {\r\n\t\tt.Fatalf(\"expected data to be a map\")\r\n\t}\r\n\r\n\tsessionID, ok := data[\"session_id\"].(string)\r\n\tif !ok || sessionID == \"\" {\r\n\t\tt.Fatalf(\"expected non-empty session_id, got %v\", data[\"session_id\"])\r\n\t}\r\n\r\n\tif !strings.HasPrefix(sessionID, \"sess_\") {\r\n\t\tt.Fatalf(\"expected session_id to start with sess_, got %s\", sessionID)\r\n\t}\r\n}\r\n\r\nfunc TestDrawUnderstandHandler(t *testing.T) {\r\n\tr := router.Setup()\r\n\r\n\tbody := `{\"sentences\":\"画一只猫\"}`\r\n\treq := httptest.NewRequest(http.MethodPost, \"/api/v1/draw/understand\", strings.NewReader(body))\r\n\treq.Header.Set(\"Content-Type\", \"application/json\")\r\n\trec := httptest.NewRecorder()\r\n\tr.ServeHTTP(rec, req)\r\n\r\n\tif rec.Code != http.StatusOK {\r\n\t\tt.Fatalf(\"expected status 200, got %d\", rec.Code)\r\n\t}\r\n\r\n\tvar resp model.Response\r\n\tif err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {\r\n\t\tt.Fatalf(\"failed to unmarshal response: %v\", err)\r\n\t}\r\n\r\n\tif resp.Code != 200 {\r\n\t\tt.Fatalf(\"expected code 200, got %d\", resp.Code)\r\n\t}\r\n\r\n\tdata, ok := resp.Data.(map[string]interface{})\r\n\tif !ok {\r\n\t\tt.Fatalf(\"expected data to be a map\")\r\n\t}\r\n\r\n\tif data[\"op\"] == \"\" {\r\n\t\tt.Fatal(\"expected non-empty op\")\r\n\t}\r\n\r\n\tif data[\"content\"] == \"\" {\r\n\t\tt.Fatal(\"expected non-empty content\")\r\n\t}\r\n}\r\n\r\nfunc TestDrawUnderstandHandlerInvalidBody(t *testing.T) {\r\n\tr := router.Setup()\r\n\r\n\treq := httptest.NewRequest(http.MethodPost, \"/api/v1/draw/understand\", strings.NewReader(\"not json\"))\r\n\treq.Header.Set(\"Content-Type\", \"application/json\")\r\n\trec := httptest.NewRecorder()\r\n\tr.ServeHTTP(rec, req)\r\n\r\n\tif rec.Code != http.StatusBadRequest {\r\n\t\tt.Fatalf(\"expected status 400, got %d\", rec.Code)\r\n\t}\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/main_test.go b/backend/main_test.go
+--- a/backend/main_test.go	(revision 6339ad7af482b8b1613d5a9a0b8654ff93238ece)
++++ b/backend/main_test.go	(date 1781255376481)
+@@ -9,18 +9,30 @@
+ 
+ 	"github.com/gin-gonic/gin"
+ 
++	"voxcanvas/backend/internal/llm"
+ 	"voxcanvas/backend/internal/model"
+ 	"voxcanvas/backend/internal/router"
++	"voxcanvas/backend/internal/service"
+ )
+ 
+ func init() {
+ 	gin.SetMode(gin.TestMode)
+ }
+ 
++func testSetup() *gin.Engine {
++	drawSvc := &service.DrawService{
++		Dev:        service.NewDevStore(),
++		Classifier: &llm.MockClassifier{},
++		Refiner:    &llm.MockRefiner{},
++		Generator:  &llm.MockGenerator{},
++	}
++	return router.Setup(drawSvc)
++}
++
+ func TestHealthHandler(t *testing.T) {
+-	r := router.Setup()
++	r := testSetup()
+ 
+-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
++	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+ 	rec := httptest.NewRecorder()
+ 	r.ServeHTTP(rec, req)
+ 
+@@ -39,7 +51,7 @@
+ }
+ 
+ func TestSessionStartHandler(t *testing.T) {
+-	r := router.Setup()
++	r := testSetup()
+ 
+ 	req := httptest.NewRequest(http.MethodPost, "/api/v1/session/start", nil)
+ 	rec := httptest.NewRecorder()
+@@ -74,7 +86,7 @@
+ }
+ 
+ func TestDrawUnderstandHandler(t *testing.T) {
+-	r := router.Setup()
++	r := testSetup()
+ 
+ 	body := `{"sentences":"画一只猫"}`
+ 	req := httptest.NewRequest(http.MethodPost, "/api/v1/draw/understand", strings.NewReader(body))
+@@ -110,7 +122,7 @@
+ }
+ 
+ func TestDrawUnderstandHandlerInvalidBody(t *testing.T) {
+-	r := router.Setup()
++	r := testSetup()
+ 
+ 	req := httptest.NewRequest(http.MethodPost, "/api/v1/draw/understand", strings.NewReader("not json"))
+ 	req.Header.Set("Content-Type", "application/json")
+Index: backend/internal/router/router.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package router\r\n\r\nimport (\r\n\t\"github.com/gin-gonic/gin\"\r\n\r\n\t\"voxcanvas/backend/internal/handler\"\r\n)\r\n\r\nfunc Setup() *gin.Engine {\r\n\tr := gin.Default()\r\n\r\n\tr.GET(\"/\", handler.Home)\r\n\tr.GET(\"/health\", handler.Health)\r\n\r\n\tapi := r.Group(\"/api/v1\")\r\n\t{\r\n\t\tapi.POST(\"/session/start\", handler.SessionStart)\r\n\t\tapi.POST(\"/draw/understand\", handler.DrawUnderstand)\r\n\t}\r\n\r\n\treturn r\r\n}\r\n
+===================================================================
+diff --git a/backend/internal/router/router.go b/backend/internal/router/router.go
+--- a/backend/internal/router/router.go	(revision 6339ad7af482b8b1613d5a9a0b8654ff93238ece)
++++ b/backend/internal/router/router.go	(date 1781255166778)
+@@ -4,18 +4,21 @@
+ 	"github.com/gin-gonic/gin"
+ 
+ 	"voxcanvas/backend/internal/handler"
++	"voxcanvas/backend/internal/service"
+ )
+ 
+-func Setup() *gin.Engine {
++func Setup(drawSvc *service.DrawService) *gin.Engine {
+ 	r := gin.Default()
+ 
+ 	r.GET("/", handler.Home)
+ 	r.GET("/health", handler.Health)
+ 
++	drawH := &handler.DrawHandler{Svc: drawSvc}
++
+ 	api := r.Group("/api/v1")
+ 	{
+ 		api.POST("/session/start", handler.SessionStart)
+-		api.POST("/draw/understand", handler.DrawUnderstand)
++		api.POST("/draw/understand", drawH.Understand)
+ 	}
+ 
+ 	return r
+Index: backend/go.sum
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>github.com/bytedance/gopkg v0.1.3 h1:TPBSwH8RsouGCBcMBktLt1AymVo2TVsBVCY4b6TnZ/M=\r\ngithub.com/bytedance/gopkg v0.1.3/go.mod h1:576VvJ+eJgyCzdjS+c4+77QF3p7ubbtiKARP3TxducM=\r\ngithub.com/bytedance/gopkg v0.1.4 h1:oZnQwnX82KAIWb7033bEwtxvTqXcYMxDBaQxo5JJHWM=\r\ngithub.com/bytedance/gopkg v0.1.4/go.mod h1:v1zWfPm21Fb+OsyXN2VAHdL6TBb2L88anLQgdyje6R4=\r\ngithub.com/bytedance/sonic v1.15.0 h1:/PXeWFaR5ElNcVE84U0dOHjiMHQOwNIx3K4ymzh/uSE=\r\ngithub.com/bytedance/sonic v1.15.0/go.mod h1:tFkWrPz0/CUCLEF4ri4UkHekCIcdnkqXw9VduqpJh0k=\r\ngithub.com/bytedance/sonic v1.15.2 h1:90H+rcF/FwLXwfB1cudOLq/je83n683Utf4Cbp0xHCo=\r\ngithub.com/bytedance/sonic v1.15.2/go.mod h1:mT2NbXunuaEbnZ+mRIX/vYqKISmgEuHFDI4UzmKx2SA=\r\ngithub.com/bytedance/sonic/loader v0.5.0 h1:gXH3KVnatgY7loH5/TkeVyXPfESoqSBSBEiDd5VjlgE=\r\ngithub.com/bytedance/sonic/loader v0.5.0/go.mod h1:AR4NYCk5DdzZizZ5djGqQ92eEhCCcdf5x77udYiSJRo=\r\ngithub.com/bytedance/sonic/loader v0.5.1 h1:Ygpfa9zwRCCKSlrp5bBP/b/Xzc3VxsAW+5NIYXrOOpI=\r\ngithub.com/bytedance/sonic/loader v0.5.1/go.mod h1:AR4NYCk5DdzZizZ5djGqQ92eEhCCcdf5x77udYiSJRo=\r\ngithub.com/cloudwego/base64x v0.1.6 h1:t11wG9AECkCDk5fMSoxmufanudBtJ+/HemLstXDLI2M=\r\ngithub.com/cloudwego/base64x v0.1.6/go.mod h1:OFcloc187FXDaYHvrNIjxSe8ncn0OOM8gEHfghB2IPU=\r\ngithub.com/cloudwego/base64x v0.1.7 h1:NppS+Fgzg5ovhn4NkUXaDT3x9jldgH5ToMCqzBSi2zI=\r\ngithub.com/cloudwego/base64x v0.1.7/go.mod h1:Cu1PV9zfrSf7ET2tIbWbbEy7jO7HHJ13q4X2SQ8aWYg=\r\ngithub.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=\r\ngithub.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=\r\ngithub.com/gabriel-vasile/mimetype v1.4.12 h1:e9hWvmLYvtp846tLHam2o++qitpguFiYCKbn0w9jyqw=\r\ngithub.com/gabriel-vasile/mimetype v1.4.12/go.mod h1:d+9Oxyo1wTzWdyVUPMmXFvp4F9tea18J8ufA774AB3s=\r\ngithub.com/gabriel-vasile/mimetype v1.4.13 h1:46nXokslUBsAJE/wMsp5gtO500a4F3Nkz9Ufpk2AcUM=\r\ngithub.com/gabriel-vasile/mimetype v1.4.13/go.mod h1:d+9Oxyo1wTzWdyVUPMmXFvp4F9tea18J8ufA774AB3s=\r\ngithub.com/gin-contrib/sse v1.1.0 h1:n0w2GMuUpWDVp7qSpvze6fAu9iRxJY4Hmj6AmBOU05w=\r\ngithub.com/gin-contrib/sse v1.1.0/go.mod h1:hxRZ5gVpWMT7Z0B0gSNYqqsSCNIJMjzvm6fqCz9vjwM=\r\ngithub.com/gin-contrib/sse v1.1.1 h1:uGYpNwTacv5R68bSGMapo62iLTRa9l5zxGCps4hK6ko=\r\ngithub.com/gin-contrib/sse v1.1.1/go.mod h1:QXzuVkA0YO7o/gun03UI1Q+FTI8ZV/n5t03kIQAI89s=\r\ngithub.com/gin-gonic/gin v1.12.0 h1:b3YAbrZtnf8N//yjKeU2+MQsh2mY5htkZidOM7O0wG8=\r\ngithub.com/gin-gonic/gin v1.12.0/go.mod h1:VxccKfsSllpKshkBWgVgRniFFAzFb9csfngsqANjnLc=\r\ngithub.com/go-playground/locales v0.14.1 h1:EWaQ/wswjilfKLTECiXz7Rh+3BjFhfDFKv/oXslEjJA=\r\ngithub.com/go-playground/locales v0.14.1/go.mod h1:hxrqLVvrK65+Rwrd5Fc6F2O76J/NuW9t0sjnWqG1slY=\r\ngithub.com/go-playground/universal-translator v0.18.1 h1:Bcnm0ZwsGyWbCzImXv+pAJnYK9S473LQFuzCbDbfSFY=\r\ngithub.com/go-playground/universal-translator v0.18.1/go.mod h1:xekY+UJKNuX9WP91TpwSH2VMlDf28Uj24BCp08ZFTUY=\r\ngithub.com/go-playground/validator/v10 v10.30.1 h1:f3zDSN/zOma+w6+1Wswgd9fLkdwy06ntQJp0BBvFG0w=\r\ngithub.com/go-playground/validator/v10 v10.30.1/go.mod h1:oSuBIQzuJxL//3MelwSLD5hc2Tu889bF0Idm9Dg26cM=\r\ngithub.com/go-playground/validator/v10 v10.30.3 h1:4MU6YkEwx7GbcPJOZxrtbu+QfF3pJLJuaYTeAH0DYy8=\r\ngithub.com/go-playground/validator/v10 v10.30.3/go.mod h1:4Axh7oCNGcoGkqLoE4YWt6n20mcEIsPRlB7vPk3lpyc=\r\ngithub.com/goccy/go-json v0.10.5 h1:Fq85nIqj+gXn/S5ahsiTlK3TmC85qgirsdTP/+DeaC4=\r\ngithub.com/goccy/go-json v0.10.5/go.mod h1:oq7eo15ShAhp70Anwd5lgX2pLfOS3QCiwU/PULtXL6M=\r\ngithub.com/goccy/go-json v0.10.6 h1:p8HrPJzOakx/mn/bQtjgNjdTcN+/S6FcG2CTtQOrHVU=\r\ngithub.com/goccy/go-json v0.10.6/go.mod h1:oq7eo15ShAhp70Anwd5lgX2pLfOS3QCiwU/PULtXL6M=\r\ngithub.com/goccy/go-yaml v1.19.2 h1:PmFC1S6h8ljIz6gMRBopkjP1TVT7xuwrButHID66PoM=\r\ngithub.com/goccy/go-yaml v1.19.2/go.mod h1:XBurs7gK8ATbW4ZPGKgcbrY1Br56PdM69F7LkFRi1kA=\r\ngithub.com/google/gofuzz v1.0.0/go.mod h1:dBl0BpW6vV/+mYPU4Po3pmUjxk6FQPldtuIdl/M65Eg=\r\ngithub.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=\r\ngithub.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=\r\ngithub.com/klauspost/cpuid/v2 v2.3.0 h1:S4CRMLnYUhGeDFDqkGriYKdfoFlDnMtqTiI/sFzhA9Y=\r\ngithub.com/klauspost/cpuid/v2 v2.3.0/go.mod h1:hqwkgyIinND0mEev00jJYCxPNVRVXFQeu1XKlok6oO0=\r\ngithub.com/leodido/go-urn v1.4.0 h1:WT9HwE9SGECu3lg4d/dIA+jxlljEa1/ffXKmRjqdmIQ=\r\ngithub.com/leodido/go-urn v1.4.0/go.mod h1:bvxc+MVxLKB4z00jd1z+Dvzr47oO32F/QSNjSBOlFxI=\r\ngithub.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=\r\ngithub.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=\r\ngithub.com/mattn/go-isatty v0.0.22 h1:j8l17JJ9i6VGPUFUYoTUKPSgKe/83EYU2zBC7YNKMw4=\r\ngithub.com/mattn/go-isatty v0.0.22/go.mod h1:ZXfXG4SQHsB/w3ZeOYbR0PrPwLy+n6xiMrJlRFqopa4=\r\ngithub.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=\r\ngithub.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd h1:TRLaZ9cD/w8PVh93nsPXa1VrQ6jlwL5oN8l14QlcNfg=\r\ngithub.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=\r\ngithub.com/modern-go/reflect2 v1.0.2 h1:xBagoLtFs94CBntxluKeaWgTMpvLxC4ur3nMaC9Gz0M=\r\ngithub.com/modern-go/reflect2 v1.0.2/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=\r\ngithub.com/pelletier/go-toml/v2 v2.2.4 h1:mye9XuhQ6gvn5h28+VilKrrPoQVanw5PMw/TB0t5Ec4=\r\ngithub.com/pelletier/go-toml/v2 v2.2.4/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=\r\ngithub.com/pelletier/go-toml/v2 v2.3.1 h1:MYEvvGnQjeNkRF1qUuGolNtNExTDwct51yp7olPtrEc=\r\ngithub.com/pelletier/go-toml/v2 v2.3.1/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=\r\ngithub.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=\r\ngithub.com/quic-go/qpack v0.6.0 h1:g7W+BMYynC1LbYLSqRt8PBg5Tgwxn214ZZR34VIOjz8=\r\ngithub.com/quic-go/qpack v0.6.0/go.mod h1:lUpLKChi8njB4ty2bFLX2x4gzDqXwUpaO1DP9qMDZII=\r\ngithub.com/quic-go/quic-go v0.59.0 h1:OLJkp1Mlm/aS7dpKgTc6cnpynnD2Xg7C1pwL6vy/SAw=\r\ngithub.com/quic-go/quic-go v0.59.0/go.mod h1:upnsH4Ju1YkqpLXC305eW3yDZ4NfnNbmQRCMWS58IKU=\r\ngithub.com/quic-go/quic-go v0.60.0 h1:xcQioE8OM66UQLeUMHltK1CCcOu3JbVB4JAQdDQSB+0=\r\ngithub.com/quic-go/quic-go v0.60.0/go.mod h1:wpKpjmPpftl30sL6pFh7REVpjbcCVy4zt2vDyK1TuJk=\r\ngithub.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=\r\ngithub.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=\r\ngithub.com/stretchr/objx v0.5.0/go.mod h1:Yh+to48EsGEfYuaHDzXPcE3xhTkx73EhmCGUpEOglKo=\r\ngithub.com/stretchr/objx v0.5.2/go.mod h1:FRsXN1f5AsAjCGJKqEizvkpNtU+EGNCLh3NxZ/8L+MA=\r\ngithub.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=\r\ngithub.com/stretchr/testify v1.7.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=\r\ngithub.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=\r\ngithub.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=\r\ngithub.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=\r\ngithub.com/twitchyliquid64/golang-asm v0.15.1 h1:SU5vSMR7hnwNxj24w34ZyCi/FmDZTkS4MhqMhdFk5YI=\r\ngithub.com/twitchyliquid64/golang-asm v0.15.1/go.mod h1:a1lVb/DtPvCB8fslRZhAngC2+aY1QWCk3Cedj/Gdt08=\r\ngithub.com/ugorji/go/codec v1.3.1 h1:waO7eEiFDwidsBN6agj1vJQ4AG7lh2yqXyOXqhgQuyY=\r\ngithub.com/ugorji/go/codec v1.3.1/go.mod h1:pRBVtBSKl77K30Bv8R2P+cLSGaTtex6fsA2Wjqmfxj4=\r\ngo.mongodb.org/mongo-driver/v2 v2.5.0 h1:yXUhImUjjAInNcpTcAlPHiT7bIXhshCTL3jVBkF3xaE=\r\ngo.mongodb.org/mongo-driver/v2 v2.5.0/go.mod h1:yOI9kBsufol30iFsl1slpdq1I0eHPzybRWdyYUs8K/0=\r\ngo.mongodb.org/mongo-driver/v2 v2.6.0 h1:b9sJOYrkmt4l8bY43ZenFBcPlhYIjaOfYHLtbB/5qi8=\r\ngo.mongodb.org/mongo-driver/v2 v2.6.0/go.mod h1:yOI9kBsufol30iFsl1slpdq1I0eHPzybRWdyYUs8K/0=\r\ngolang.org/x/arch v0.22.0 h1:c/Zle32i5ttqRXjdLyyHZESLD/bB90DCU1g9l/0YBDI=\r\ngolang.org/x/arch v0.22.0/go.mod h1:dNHoOeKiyja7GTvF9NJS1l3Z2yntpQNzgrjh1cU103A=\r\ngolang.org/x/arch v0.28.0 h1:wVwVdqsTuUbJvhYVCspQYwZXHNYeLSoZnmHD+ggddpQ=\r\ngolang.org/x/arch v0.28.0/go.mod h1:0X+GdSIP+kL5wPmpK7sdkEVTt2XoYP0cSjQSbZBwOi8=\r\ngolang.org/x/crypto v0.48.0 h1:/VRzVqiRSggnhY7gNRxPauEQ5Drw9haKdM0jqfcCFts=\r\ngolang.org/x/crypto v0.48.0/go.mod h1:r0kV5h3qnFPlQnBSrULhlsRfryS2pmewsg+XfMgkVos=\r\ngolang.org/x/crypto v0.53.0 h1:QZ4Muo8THX6CizN2vPPd5fBGHyogrdK9fG4wLPFUsto=\r\ngolang.org/x/crypto v0.53.0/go.mod h1:DNLU434OwVakk9PzuwV8w62mAJpRJL3vsgcfp4Qnsio=\r\ngolang.org/x/net v0.51.0 h1:94R/GTO7mt3/4wIKpcR5gkGmRLOuE/2hNGeWq/GBIFo=\r\ngolang.org/x/net v0.51.0/go.mod h1:aamm+2QF5ogm02fjy5Bb7CQ0WMt1/WVM7FtyaTLlA9Y=\r\ngolang.org/x/net v0.56.0 h1:Rw8j/hFzGvJUZwNBXnAtf5sVDVt+65SK2C7IxCxZt5o=\r\ngolang.org/x/net v0.56.0/go.mod h1:D3Ku6r+V6JROoZK144D2XfMHFcMq/0zSfLelVTCFKec=\r\ngolang.org/x/sys v0.6.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=\r\ngolang.org/x/sys v0.41.0 h1:Ivj+2Cp/ylzLiEU89QhWblYnOE9zerudt9Ftecq2C6k=\r\ngolang.org/x/sys v0.41.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=\r\ngolang.org/x/sys v0.46.0 h1:noSf2Fq6F8DBgS+LysIkx7rIExoNHJsxOAtPp4rthXw=\r\ngolang.org/x/sys v0.46.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=\r\ngolang.org/x/text v0.34.0 h1:oL/Qq0Kdaqxa1KbNeMKwQq0reLCCaFtqu2eNuSeNHbk=\r\ngolang.org/x/text v0.34.0/go.mod h1:homfLqTYRFyVYemLBFl5GgL/DWEiH5wcsQ5gSh1yziA=\r\ngolang.org/x/text v0.38.0 h1:sXmwo9DwP3OK9EZ7PqAdaooSGozfl/3a6/xJcbzPRhE=\r\ngolang.org/x/text v0.38.0/go.mod h1:YXZt3QhHUKYT53r2lLKFIVi6Ao1jdzrTR/KQ09qyxF4=\r\ngoogle.golang.org/protobuf v1.36.10 h1:AYd7cD/uASjIL6Q9LiTjz8JLcrh/88q5UObnmY3aOOE=\r\ngoogle.golang.org/protobuf v1.36.10/go.mod h1:HTf+CrKn2C3g5S8VImy6tdcUvCska2kB7j23XfzDpco=\r\ngoogle.golang.org/protobuf v1.36.11 h1:fV6ZwhNocDyBLK0dj+fg8ektcVegBBuEolpbTQyBNVE=\r\ngoogle.golang.org/protobuf v1.36.11/go.mod h1:HTf+CrKn2C3g5S8VImy6tdcUvCska2kB7j23XfzDpco=\r\ngopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=\r\ngopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=\r\ngopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=\r\n
+===================================================================
+diff --git a/backend/go.sum b/backend/go.sum
+--- a/backend/go.sum	(revision 6339ad7af482b8b1613d5a9a0b8654ff93238ece)
++++ b/backend/go.sum	(date 1781255081807)
+@@ -16,6 +16,8 @@
+ github.com/cloudwego/base64x v0.1.7/go.mod h1:Cu1PV9zfrSf7ET2tIbWbbEy7jO7HHJ13q4X2SQ8aWYg=
+ github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+ github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
++github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
++github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
+ github.com/gabriel-vasile/mimetype v1.4.12 h1:e9hWvmLYvtp846tLHam2o++qitpguFiYCKbn0w9jyqw=
+ github.com/gabriel-vasile/mimetype v1.4.12/go.mod h1:d+9Oxyo1wTzWdyVUPMmXFvp4F9tea18J8ufA774AB3s=
+ github.com/gabriel-vasile/mimetype v1.4.13 h1:46nXokslUBsAJE/wMsp5gtO500a4F3Nkz9Ufpk2AcUM=
+@@ -41,6 +43,8 @@
+ github.com/goccy/go-yaml v1.19.2 h1:PmFC1S6h8ljIz6gMRBopkjP1TVT7xuwrButHID66PoM=
+ github.com/goccy/go-yaml v1.19.2/go.mod h1:XBurs7gK8ATbW4ZPGKgcbrY1Br56PdM69F7LkFRi1kA=
+ github.com/google/gofuzz v1.0.0/go.mod h1:dBl0BpW6vV/+mYPU4Po3pmUjxk6FQPldtuIdl/M65Eg=
++github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
++github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+ github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=
+ github.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=
+ github.com/klauspost/cpuid/v2 v2.3.0 h1:S4CRMLnYUhGeDFDqkGriYKdfoFlDnMtqTiI/sFzhA9Y=
+@@ -56,6 +60,8 @@
+ github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=
+ github.com/modern-go/reflect2 v1.0.2 h1:xBagoLtFs94CBntxluKeaWgTMpvLxC4ur3nMaC9Gz0M=
+ github.com/modern-go/reflect2 v1.0.2/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
++github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=
++github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
+ github.com/pelletier/go-toml/v2 v2.2.4 h1:mye9XuhQ6gvn5h28+VilKrrPoQVanw5PMw/TB0t5Ec4=
+ github.com/pelletier/go-toml/v2 v2.2.4/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
+ github.com/pelletier/go-toml/v2 v2.3.1 h1:MYEvvGnQjeNkRF1qUuGolNtNExTDwct51yp7olPtrEc=
+@@ -67,6 +73,8 @@
+ github.com/quic-go/quic-go v0.59.0/go.mod h1:upnsH4Ju1YkqpLXC305eW3yDZ4NfnNbmQRCMWS58IKU=
+ github.com/quic-go/quic-go v0.60.0 h1:xcQioE8OM66UQLeUMHltK1CCcOu3JbVB4JAQdDQSB+0=
+ github.com/quic-go/quic-go v0.60.0/go.mod h1:wpKpjmPpftl30sL6pFh7REVpjbcCVy4zt2vDyK1TuJk=
++github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
++github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
+ github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
+ github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=
+ github.com/stretchr/objx v0.5.0/go.mod h1:Yh+to48EsGEfYuaHDzXPcE3xhTkx73EhmCGUpEOglKo=
+@@ -112,3 +120,11 @@
+ gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+ gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+ gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
++modernc.org/libc v1.72.3 h1:ZnDF4tXn4NBXFutMMQC4vtbTFSXhhKzR73fv0beZEAU=
++modernc.org/libc v1.72.3/go.mod h1:dn0dZNnnn1clLyvRxLxYExxiKRZIRENOfqQ8XEeg4Qs=
++modernc.org/mathutil v1.7.1 h1:GCZVGXdaN8gTqB1Mf/usp1Y/hSqgI2vAGGP4jZMCxOU=
++modernc.org/mathutil v1.7.1/go.mod h1:4p5IwJITfppl0G4sUEDtCr4DthTaT47/N3aT6MhfgJg=
++modernc.org/memory v1.11.0 h1:o4QC8aMQzmcwCK3t3Ux/ZHmwFPzE6hf2Y5LbkRs+hbI=
++modernc.org/memory v1.11.0/go.mod h1:/JP4VbVC+K5sU2wZi9bHoq2MAkCnrt2r98UGeSK7Mjw=
++modernc.org/sqlite v1.52.0 h1:p4dhYh2tXZCiyaqHwRVJDjIGKWyXayiQpThxgDzJaxo=
++modernc.org/sqlite v1.52.0/go.mod h1:tcNzv5p84E0skkmJn038y+hWJbLQXQqEnQfeh5r2JLM=
+Index: backend/internal/handler/draw_understand.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package handler\r\n\r\nimport (\r\n\t\"net/http\"\r\n\r\n\t\"github.com/gin-gonic/gin\"\r\n\r\n\t\"voxcanvas/backend/internal/model\"\r\n)\r\n\r\nfunc DrawUnderstand(c *gin.Context) {\r\n\tvar req model.DrawRequest\r\n\tif err := c.ShouldBindJSON(&req); err != nil {\r\n\t\tc.JSON(http.StatusBadRequest, model.Response{\r\n\t\t\tCode: 400,\r\n\t\t\tMsg:  \"invalid request body\",\r\n\t\t\tData: nil,\r\n\t\t})\r\n\t\treturn\r\n\t}\r\n\r\n\tc.JSON(http.StatusOK, model.Response{\r\n\t\tCode: 200,\r\n\t\tMsg:  \"success\",\r\n\t\tData: model.DrawData{\r\n\t\t\tOp:      \"requirement\",\r\n\t\t\tContent: req.Sentences,\r\n\t\t},\r\n\t})\r\n}\r\n
+===================================================================
+diff --git a/backend/internal/handler/draw_understand.go b/backend/internal/handler/draw_understand.go
+--- a/backend/internal/handler/draw_understand.go	(revision 6339ad7af482b8b1613d5a9a0b8654ff93238ece)
++++ b/backend/internal/handler/draw_understand.go	(date 1781255159801)
+@@ -6,9 +6,14 @@
+ 	"github.com/gin-gonic/gin"
+ 
+ 	"voxcanvas/backend/internal/model"
++	"voxcanvas/backend/internal/service"
+ )
+ 
+-func DrawUnderstand(c *gin.Context) {
++type DrawHandler struct {
++	Svc *service.DrawService
++}
++
++func (h *DrawHandler) Understand(c *gin.Context) {
+ 	var req model.DrawRequest
+ 	if err := c.ShouldBindJSON(&req); err != nil {
+ 		c.JSON(http.StatusBadRequest, model.Response{
+@@ -18,13 +23,20 @@
+ 		})
+ 		return
+ 	}
++
++	data, err := h.Svc.Handle(req.Sentences)
++	if err != nil {
++		c.JSON(http.StatusInternalServerError, model.Response{
++			Code: 500,
++			Msg:  err.Error(),
++			Data: nil,
++		})
++		return
++	}
+ 
+ 	c.JSON(http.StatusOK, model.Response{
+ 		Code: 200,
+ 		Msg:  "success",
+-		Data: model.DrawData{
+-			Op:      "requirement",
+-			Content: req.Sentences,
+-		},
++		Data: data,
+ 	})
+ }
+Index: backend/internal/handler/session_start.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package handler\r\n\r\nimport (\r\n\t\"fmt\"\r\n\t\"net/http\"\r\n\t\"time\"\r\n\r\n\t\"github.com/gin-gonic/gin\"\r\n\r\n\t\"voxcanvas/backend/internal/model\"\r\n)\r\n\r\nfunc SessionStart(c *gin.Context) {\r\n\tsessionID := fmt.Sprintf(\"sess_%s_%05d\", time.Now().Format(\"20060102\"), time.Now().UnixNano()%100000)\r\n\tc.JSON(http.StatusOK, model.Response{\r\n\t\tCode: 200,\r\n\t\tMsg:  \"success\",\r\n\t\tData: model.SessionData{\r\n\t\t\tSessionID: sessionID,\r\n\t\t},\r\n\t})\r\n}\r\n
+===================================================================
+diff --git a/backend/internal/handler/session_start.go b/backend/internal/handler/session_start.go
+--- a/backend/internal/handler/session_start.go	(revision 6339ad7af482b8b1613d5a9a0b8654ff93238ece)
++++ b/backend/internal/handler/session_start.go	(date 1781254711947)
+@@ -11,7 +11,8 @@
+ )
+ 
+ func SessionStart(c *gin.Context) {
+-	sessionID := fmt.Sprintf("sess_%s_%05d", time.Now().Format("20060102"), time.Now().UnixNano()%100000)
++	now := time.Now()
++	sessionID := fmt.Sprintf("sess_%s_%s%03d", now.Format("20060102"), now.Format("150405"), now.UnixMilli()%1000)
+ 	c.JSON(http.StatusOK, model.Response{
+ 		Code: 200,
+ 		Msg:  "success",
