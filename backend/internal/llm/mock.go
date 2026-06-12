@@ -41,5 +41,5 @@ func (m *MockGenerator) Generate(prompt string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "base64:" + base64.StdEncoding.EncodeToString(b), nil
+	return base64.StdEncoding.EncodeToString(b), nil
 }

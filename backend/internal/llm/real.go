@@ -307,17 +307,17 @@ func (g *RealGenerator) Generate(prompt string) (string, error) {
 
 	// if image is a URL, download it; if already base64, return directly
 	if strings.HasPrefix(img, "data:") {
-		return "base64:" + img, nil
+		return img, nil
 	}
 	if strings.HasPrefix(img, "http") {
 		b64, err := downloadImage(g.client, img)
 		if err != nil {
 			return "", fmt.Errorf("download image: %w", err)
 		}
-		return "base64:" + b64, nil
+		return b64, nil
 	}
 
-	return "base64:" + img, nil
+	return img, nil
 }
 
 func downloadImage(client *http.Client, url string) (string, error) {
