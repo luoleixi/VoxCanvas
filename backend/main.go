@@ -31,10 +31,10 @@ func main() {
 	)
 
 	if cfg.LLMMode == "real" {
-		client := llm.NewRealClient(cfg.LLMAPIURL, cfg.LLMAPIKey, cfg.LLMModel)
+		client := llm.NewRealClient(cfg.ChatAPIURL, cfg.APIKey, cfg.ChatModel)
 		classifier = client
 		refiner = client
-		generator = &llm.RealGenerator{}
+		generator = llm.NewRealGenerator(cfg.ImageAPIURL, cfg.APIKey, cfg.ImageModel)
 	} else {
 		classifier = &llm.MockClassifier{}
 		refiner = &llm.MockRefiner{}
