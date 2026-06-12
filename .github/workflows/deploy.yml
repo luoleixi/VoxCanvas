@@ -99,6 +99,8 @@ jobs:
             systemctl enable voxcanvas-backend
             systemctl restart voxcanvas-backend
             nginx -t
-            systemctl reload nginx
+            systemctl enable nginx
+            systemctl restart nginx
 
             curl -fsS http://127.0.0.1:6060/healthz
+            curl -fsS http://127.0.0.1/healthz
