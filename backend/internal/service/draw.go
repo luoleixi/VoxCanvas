@@ -21,32 +21,33 @@ func (s *DrawService) Handle(sentence string) (*model.DrawData, error) {
 		s.DB.InsertSentence(sentence, "user_input")
 	}
 
-	isOrder, content, err := s.Classifier.Classify(sentence)
+	intent, err := s.Classifier.Classify(sentence)
 	if err != nil {
 		return nil, err
 	}
 
-	if !isOrder {
+	switch intent.Op {
+	case "requirement":
 		refined, err := s.Dev.Append(sentence, s.Refiner)
 		if err != nil {
 			return nil, err
 		}
 		return &model.DrawData{
-			Op:      "requirement",
-			Content: refined,
+			Op:    "requirement",
+			Text:  refined,
+			Image: "",
 		}, nil
-	}
 
-	// "生成图片" triggers image generation, other orders return directly
-	if content == "生成图片" {
+	case "generate_image":
 		prompt := s.Dev.Get()
 		base64Img, err := s.Generator.Generate(prompt)
 		if err != nil {
 			log.Printf("[DRAW] image gen skipped: %v, return prompt as content", err)
 			s.Dev.Set("")
 			return &model.DrawData{
-				Op:      "order",
-				Content: prompt,
+				Op:    "generate_image",
+				Text:  "",
+				Image: "",
 			}, nil
 		}
 		if s.DB != nil {
@@ -54,13 +55,26 @@ func (s *DrawService) Handle(sentence string) (*model.DrawData, error) {
 		}
 		s.Dev.Set("")
 		return &model.DrawData{
-			Op:      "order",
-			Content: base64Img,
+			Op:    "generate_image",
+			Text:  "",
+			Image: base64Img,
+		}, nil
+
+	case "undo", "clear", "switch_session", "unknown":
+		if intent.Op == "clear" {
+			s.Dev.Set("")
+		}
+		return &model.DrawData{
+			Op:    intent.Op,
+			Text:  "",
+			Image: "",
+		}, nil
+
+	default:
+		return &model.DrawData{
+			Op:    "unknown",
+			Text:  "",
+			Image: "",
 		}, nil
 	}
-
-	return &model.DrawData{
-		Op:      "order",
-		Content: content,
-	}, nil
 }
