@@ -39,6 +39,100 @@ func TestInsertSessionEvent(t *testing.T) {
 	}
 }
 
+func TestRecordUndoToPreviousImageCanUndoRepeatedly(t *testing.T) {
+	dir := t.TempDir()
+	database, err := Open(dir)
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer database.Close()
+
+	if err := database.UpsertSession("client_test", "sess_undo"); err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	firstID, err := database.RecordGeneratedImage("sess_undo", "prompt 1", "image 1", "title 1", "summary 1", SessionEvent{
+		SessionID: "sess_undo",
+		EventType: "image_generated",
+		Dev:       "prompt 1",
+	})
+	if err != nil {
+		t.Fatalf("failed to record first image: %v", err)
+	}
+	secondID, err := database.RecordGeneratedImage("sess_undo", "prompt 2", "image 2", "title 2", "summary 2", SessionEvent{
+		SessionID: "sess_undo",
+		EventType: "image_generated",
+		Dev:       "prompt 2",
+	})
+	if err != nil {
+		t.Fatalf("failed to record second image: %v", err)
+	}
+	thirdID, err := database.RecordGeneratedImage("sess_undo", "prompt 3", "image 3", "title 3", "summary 3", SessionEvent{
+		SessionID: "sess_undo",
+		EventType: "image_generated",
+		Dev:       "prompt 3",
+	})
+	if err != nil {
+		t.Fatalf("failed to record third image: %v", err)
+	}
+
+	currentID, err := database.CurrentImageID("sess_undo")
+	if err != nil {
+		t.Fatalf("failed to query current image: %v", err)
+	}
+	if currentID != thirdID {
+		t.Fatalf("expected current image %d, got %d", thirdID, currentID)
+	}
+
+	image, err := database.RecordUndoToPreviousImage("sess_undo", SessionEvent{
+		SessionID:       "sess_undo",
+		EventType:       "undo",
+		PreviousImageID: thirdID,
+	})
+	if err != nil {
+		t.Fatalf("failed to undo to third image: %v", err)
+	}
+	if image == nil || image.ImageID != thirdID || image.Prompt != "prompt 3" || image.Base64Data != "image 3" {
+		t.Fatalf("expected third image, got %#v", image)
+	}
+
+	image, err = database.RecordUndoToPreviousImage("sess_undo", SessionEvent{
+		SessionID:       "sess_undo",
+		EventType:       "undo",
+		PreviousImageID: thirdID,
+	})
+	if err != nil {
+		t.Fatalf("failed to undo to second image: %v", err)
+	}
+	if image == nil || image.ImageID != secondID || image.Prompt != "prompt 2" || image.Base64Data != "image 2" {
+		t.Fatalf("expected second image, got %#v", image)
+	}
+
+	image, err = database.RecordUndoToPreviousImage("sess_undo", SessionEvent{
+		SessionID:       "sess_undo",
+		EventType:       "undo",
+		PreviousImageID: secondID,
+	})
+	if err != nil {
+		t.Fatalf("failed to undo to first image: %v", err)
+	}
+	if image == nil || image.ImageID != firstID || image.Prompt != "prompt 1" || image.Base64Data != "image 1" {
+		t.Fatalf("expected first image, got %#v", image)
+	}
+
+	image, err = database.RecordUndoToPreviousImage("sess_undo", SessionEvent{
+		SessionID:       "sess_undo",
+		EventType:       "undo",
+		PreviousImageID: firstID,
+	})
+	if err != nil {
+		t.Fatalf("failed to undo with no previous image: %v", err)
+	}
+	if image != nil {
+		t.Fatalf("expected no previous image, got %#v", image)
+	}
+}
+
 func TestRecordSentenceWritesSentenceAndEventInTransaction(t *testing.T) {
 	dir := t.TempDir()
 	database, err := Open(dir)

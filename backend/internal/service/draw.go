@@ -25,7 +25,13 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 		}
 	}
 	var previousImageID int64
-	if s.Generated != nil {
+	if s.DB != nil {
+		imageID, err := s.DB.CurrentImageID(sessionID)
+		if err != nil {
+			return nil, err
+		}
+		previousImageID = imageID
+	} else if s.Generated != nil {
 		if result, ok := s.Generated.Get(sessionID); ok {
 			previousImageID = result.ImageID
 		}
@@ -158,32 +164,50 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 		}, nil
 
 	case "undo":
+		if s.DB != nil {
+			image, err := s.DB.RecordUndoToPreviousImage(sessionID, db.SessionEvent{
+				SessionID:       sessionID,
+				EventType:       "undo",
+				SentenceID:      sentenceID,
+				PreviousImageID: previousImageID,
+				Sentence:        sentence,
+				BeforeDev:       beforeDev,
+				BeforeImageID:   previousImageID,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if image == nil {
+				log.Printf("[DRAW] undo miss session_id=%s reason=no_previous_image previous_image_id=%d", sessionID, previousImageID)
+				return &model.DrawData{Op: "undo", Text: "", Image: ""}, nil
+			}
+			s.Dev.Set(sessionID, image.Prompt)
+			if s.Generated != nil {
+				s.Generated.Set(sessionID, GeneratedResult{
+					ImageID: image.ImageID,
+					Text:    image.Prompt,
+					Image:   image.Base64Data,
+				})
+			}
+			log.Printf("[DRAW] undo hit session_id=%s image_id=%d text_len=%d image_len=%d", sessionID, image.ImageID, len(image.Prompt), len(image.Base64Data))
+			return &model.DrawData{
+				Op:    "undo",
+				Text:  image.Prompt,
+				Image: image.Base64Data,
+			}, nil
+		}
+
 		if s.Generated == nil {
 			log.Printf("[DRAW] undo miss session_id=%s reason=no_generated_store", sessionID)
 			return &model.DrawData{Op: "undo", Text: "", Image: ""}, nil
 		}
-		result, ok := s.Generated.Get(sessionID)
+		result, ok := s.Generated.UndoPrevious(sessionID)
 		if !ok {
-			log.Printf("[DRAW] undo miss session_id=%s reason=no_generated_result", sessionID)
+			log.Printf("[DRAW] undo miss session_id=%s reason=no_previous_generated_result", sessionID)
 			return &model.DrawData{Op: "undo", Text: "", Image: ""}, nil
 		}
 		s.Dev.Set(sessionID, result.Text)
-		if s.DB != nil {
-			title, summary := BuildSessionMeta(result.Text)
-			if err := s.DB.RecordUndo(sessionID, result.Text, title, summary, db.SessionEvent{
-				SessionID:       sessionID,
-				EventType:       "undo",
-				SentenceID:      sentenceID,
-				ImageID:         result.ImageID,
-				PreviousImageID: previousImageID,
-				Sentence:        sentence,
-				Dev:             result.Text,
-				BeforeDev:       beforeDev,
-				BeforeImageID:   previousImageID,
-			}); err != nil {
-				return nil, err
-			}
-		} else if err := s.setSessionDev(sessionID, result.Text); err != nil {
+		if err := s.setSessionDev(sessionID, result.Text); err != nil {
 			return nil, err
 		}
 		return &model.DrawData{

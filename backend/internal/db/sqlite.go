@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -35,6 +36,8 @@ func Open(dataDir string) (*DB, error) {
 			dev TEXT NOT NULL DEFAULT '',
 			title TEXT NOT NULL DEFAULT '',
 			summary TEXT NOT NULL DEFAULT '',
+			current_image_id INTEGER,
+			undo_image_id INTEGER,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -79,6 +82,12 @@ func Open(dataDir string) (*DB, error) {
 		return nil, err
 	}
 	if err := ensureColumn(conn, "sessions", "summary", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return nil, err
+	}
+	if err := ensureColumn(conn, "sessions", "current_image_id", "INTEGER"); err != nil {
+		return nil, err
+	}
+	if err := ensureColumn(conn, "sessions", "undo_image_id", "INTEGER"); err != nil {
 		return nil, err
 	}
 	if err := ensureColumn(conn, "sentences", "previous_image_id", "INTEGER"); err != nil {
@@ -171,6 +180,21 @@ func (d *DB) UpdateSessionMeta(sessionID, title, summary string) error {
 	})
 }
 
+func (d *DB) CurrentImageID(sessionID string) (int64, error) {
+	var imageID sql.NullInt64
+	err := d.conn.QueryRow("SELECT current_image_id FROM sessions WHERE id = ?", sessionID).Scan(&imageID)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if !imageID.Valid {
+		return 0, nil
+	}
+	return imageID.Int64, nil
+}
+
 func (d *DB) RecordSentence(sessionID string, previousImageID int64, content, typ, beforeDev string) (int64, error) {
 	var sentenceID int64
 	err := d.withTx(func(tx *sql.Tx) error {
@@ -219,6 +243,12 @@ func (d *DB) RecordGeneratedImage(sessionID, prompt, base64Data, title, summary 
 		if err := updateSessionMetaTx(tx, sessionID, title, summary); err != nil {
 			return err
 		}
+		if err := updateSessionCurrentImageTx(tx, sessionID, imageID); err != nil {
+			return err
+		}
+		if err := updateSessionUndoImageTx(tx, sessionID, imageID); err != nil {
+			return err
+		}
 		return updateSessionDevTx(tx, sessionID, "")
 	})
 	return imageID, err
@@ -236,12 +266,78 @@ func (d *DB) RecordUndo(sessionID, dev, title, summary string, event SessionEven
 	})
 }
 
+type GeneratedImage struct {
+	ImageID    int64
+	Prompt     string
+	Base64Data string
+}
+
+func (d *DB) RecordUndoToPreviousImage(sessionID string, event SessionEvent) (*GeneratedImage, error) {
+	var image *GeneratedImage
+	err := d.withTx(func(tx *sql.Tx) error {
+		targetImageID, ok, err := undoImageIDTx(tx, sessionID)
+		if err != nil {
+			return err
+		}
+
+		var target *GeneratedImage
+		if ok {
+			target, err = imageByIDTx(tx, sessionID, targetImageID)
+		}
+		if err != nil {
+			return err
+		}
+		if target == nil {
+			event.ImageID = 0
+			event.Dev = ""
+			if err := insertSessionEventTx(tx, event); err != nil {
+				return err
+			}
+			image = nil
+			return nil
+		}
+
+		event.ImageID = target.ImageID
+		event.Dev = target.Prompt
+		title, summary := sessionMetaFromText(target.Prompt)
+		if err := updateSessionDevTx(tx, sessionID, target.Prompt); err != nil {
+			return err
+		}
+		if err := updateSessionMetaTx(tx, sessionID, title, summary); err != nil {
+			return err
+		}
+		if err := updateSessionCurrentImageTx(tx, sessionID, target.ImageID); err != nil {
+			return err
+		}
+		nextImageID, err := previousImageIDTx(tx, sessionID, target.ImageID)
+		if err != nil {
+			return err
+		}
+		if err := updateSessionUndoImageTx(tx, sessionID, nextImageID); err != nil {
+			return err
+		}
+		if err := insertSessionEventTx(tx, event); err != nil {
+			return err
+		}
+
+		image = target
+		return nil
+	})
+	return image, err
+}
+
 func (d *DB) RecordClear(sessionID string, event SessionEvent) error {
 	return d.withTx(func(tx *sql.Tx) error {
 		if err := updateSessionDevTx(tx, sessionID, ""); err != nil {
 			return err
 		}
 		if err := updateSessionMetaTx(tx, sessionID, "", ""); err != nil {
+			return err
+		}
+		if err := updateSessionCurrentImageTx(tx, sessionID, 0); err != nil {
+			return err
+		}
+		if err := updateSessionUndoImageTx(tx, sessionID, 0); err != nil {
 			return err
 		}
 		return insertSessionEventTx(tx, event)
@@ -353,6 +449,120 @@ func updateSessionMetaTx(tx *sql.Tx, sessionID, title, summary string) error {
 		WHERE id = ?
 	`, title, summary, sessionID)
 	return err
+}
+
+func updateSessionCurrentImageTx(tx *sql.Tx, sessionID string, imageID int64) error {
+	_, err := tx.Exec(`
+		UPDATE sessions
+		SET current_image_id = NULLIF(?, 0), updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, imageID, sessionID)
+	return err
+}
+
+func updateSessionUndoImageTx(tx *sql.Tx, sessionID string, imageID int64) error {
+	_, err := tx.Exec(`
+		UPDATE sessions
+		SET undo_image_id = NULLIF(?, 0), updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, imageID, sessionID)
+	return err
+}
+
+func currentImageIDTx(tx *sql.Tx, sessionID string) (int64, error) {
+	imageID, ok, err := nullableImageIDTx(tx, "SELECT current_image_id FROM sessions WHERE id = ?", sessionID)
+	if err != nil || !ok {
+		return 0, err
+	}
+	return imageID, nil
+}
+
+func undoImageIDTx(tx *sql.Tx, sessionID string) (int64, bool, error) {
+	imageID, ok, err := nullableImageIDTx(tx, "SELECT undo_image_id FROM sessions WHERE id = ?", sessionID)
+	return imageID, ok, err
+}
+
+func nullableImageIDTx(tx *sql.Tx, query, sessionID string) (int64, bool, error) {
+	var imageID sql.NullInt64
+	err := tx.QueryRow(query, sessionID).Scan(&imageID)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if !imageID.Valid {
+		return 0, false, nil
+	}
+	return imageID.Int64, true, nil
+}
+
+func imageByIDTx(tx *sql.Tx, sessionID string, imageID int64) (*GeneratedImage, error) {
+	return queryGeneratedImageTx(tx, `
+		SELECT id, prompt, base64_data
+		FROM images
+		WHERE session_id = ? AND id = ?
+		LIMIT 1
+	`, sessionID, imageID)
+}
+
+func latestImageTx(tx *sql.Tx, sessionID string) (*GeneratedImage, error) {
+	return queryGeneratedImageTx(tx, `
+		SELECT id, prompt, base64_data
+		FROM images
+		WHERE session_id = ?
+		ORDER BY id DESC
+		LIMIT 1
+	`, sessionID)
+}
+
+func previousImageTx(tx *sql.Tx, sessionID string, currentImageID int64) (*GeneratedImage, error) {
+	return queryGeneratedImageTx(tx, `
+		SELECT id, prompt, base64_data
+		FROM images
+		WHERE session_id = ? AND id < ?
+		ORDER BY id DESC
+		LIMIT 1
+	`, sessionID, currentImageID)
+}
+
+func previousImageIDTx(tx *sql.Tx, sessionID string, currentImageID int64) (int64, error) {
+	image, err := previousImageTx(tx, sessionID, currentImageID)
+	if err != nil || image == nil {
+		return 0, err
+	}
+	return image.ImageID, nil
+}
+
+func queryGeneratedImageTx(tx *sql.Tx, query string, args ...interface{}) (*GeneratedImage, error) {
+	var image GeneratedImage
+	err := tx.QueryRow(query, args...).Scan(&image.ImageID, &image.Prompt, &image.Base64Data)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &image, nil
+}
+
+func sessionMetaFromText(text string) (string, string) {
+	summary := strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	if summary == "" {
+		return "", ""
+	}
+	return truncateRunes(summary, 18), truncateRunes(summary, 80)
+}
+
+func truncateRunes(text string, limit int) string {
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	if limit <= 3 {
+		return string(runes[:limit])
+	}
+	return string(runes[:limit-3]) + "..."
 }
 
 func insertSentenceTx(tx *sql.Tx, sessionID string, previousImageID int64, content, typ string) (int64, error) {
