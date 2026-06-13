@@ -42,6 +42,70 @@ func TestInsertSessionEvent(t *testing.T) {
 	}
 }
 
+func TestSessionTitleSummaryAreStableAfterFirstSet(t *testing.T) {
+	dir := t.TempDir()
+	database, err := Open(dir)
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer database.Close()
+
+	if err := database.UpsertSession("client_test", "sess_meta"); err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	if err := database.RecordRequirementRefined("sess_meta", "first title", "first summary", SessionEvent{
+		SessionID: "sess_meta",
+		EventType: "requirement_refined",
+		Dev:       "first prompt",
+	}); err != nil {
+		t.Fatalf("failed to set initial meta: %v", err)
+	}
+	if err := database.RecordRequirementRefined("sess_meta", "second title", "second summary", SessionEvent{
+		SessionID: "sess_meta",
+		EventType: "requirement_refined",
+		Dev:       "second prompt",
+	}); err != nil {
+		t.Fatalf("failed to refine again: %v", err)
+	}
+	imageID, err := database.RecordGeneratedImage("sess_meta", "image prompt", "image data", "image title", "image summary", SessionEvent{
+		SessionID: "sess_meta",
+		EventType: "image_generated",
+		Dev:       "image prompt",
+	})
+	if err != nil {
+		t.Fatalf("failed to record image: %v", err)
+	}
+	if _, err := database.RecordUndoToPreviousImage("sess_meta", SessionEvent{
+		SessionID:       "sess_meta",
+		EventType:       "undo",
+		PreviousImageID: imageID,
+	}); err != nil {
+		t.Fatalf("failed to undo: %v", err)
+	}
+	if err := database.RecordClear("sess_meta", SessionEvent{
+		SessionID:       "sess_meta",
+		EventType:       "clear",
+		PreviousImageID: imageID,
+	}); err != nil {
+		t.Fatalf("failed to clear: %v", err)
+	}
+
+	sessions, err := database.ListSessionsByClient("client_test", 20)
+	if err != nil {
+		t.Fatalf("failed to list sessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+	if sessions[0].Title != "first title" {
+		t.Fatalf("expected stable title, got %q", sessions[0].Title)
+	}
+	if sessions[0].Summary != "first summary" {
+		t.Fatalf("expected stable summary, got %q", sessions[0].Summary)
+	}
+}
+
 func TestRecordUndoToPreviousImageCanUndoRepeatedly(t *testing.T) {
 	dir := t.TempDir()
 	database, err := Open(dir)

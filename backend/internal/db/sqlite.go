@@ -246,7 +246,7 @@ func (d *DB) RecordRequirementRefined(sessionID, title, summary string, event Se
 		if err := updateSessionDevTx(tx, sessionID, event.Dev); err != nil {
 			return err
 		}
-		if err := updateSessionMetaTx(tx, sessionID, title, summary); err != nil {
+		if err := updateSessionMetaIfEmptyTx(tx, sessionID, title, summary); err != nil {
 			return err
 		}
 		return insertSessionEventTx(tx, event)
@@ -273,7 +273,7 @@ func (d *DB) RecordGeneratedImage(sessionID, prompt, base64Data, title, summary 
 		if err := insertSessionEventTx(tx, event); err != nil {
 			return err
 		}
-		if err := updateSessionMetaTx(tx, sessionID, title, summary); err != nil {
+		if err := updateSessionMetaIfEmptyTx(tx, sessionID, title, summary); err != nil {
 			return err
 		}
 		if err := updateSessionCurrentImageTx(tx, sessionID, imageID); err != nil {
@@ -296,9 +296,6 @@ func (d *DB) RecordGeneratedImage(sessionID, prompt, base64Data, title, summary 
 func (d *DB) RecordUndo(sessionID, dev, title, summary string, event SessionEvent) error {
 	return d.withTx(func(tx *sql.Tx) error {
 		if err := updateSessionDevTx(tx, sessionID, dev); err != nil {
-			return err
-		}
-		if err := updateSessionMetaTx(tx, sessionID, title, summary); err != nil {
 			return err
 		}
 		return insertSessionEventTx(tx, event)
@@ -362,11 +359,7 @@ func (d *DB) RecordUndoToPreviousImage(sessionID string, event SessionEvent) (*G
 
 		event.ImageID = target.ImageID
 		event.Dev = target.Prompt
-		title, summary := sessionMetaFromText(target.Prompt)
 		if err := updateSessionDevTx(tx, sessionID, target.Prompt); err != nil {
-			return err
-		}
-		if err := updateSessionMetaTx(tx, sessionID, title, summary); err != nil {
 			return err
 		}
 		if err := updateSessionCurrentImageTx(tx, sessionID, target.ImageID); err != nil {
@@ -400,9 +393,6 @@ func (d *DB) RecordClear(sessionID string, event SessionEvent) error {
 			return err
 		}
 		if err := updateSessionDevTx(tx, sessionID, ""); err != nil {
-			return err
-		}
-		if err := updateSessionMetaTx(tx, sessionID, "", ""); err != nil {
 			return err
 		}
 		if err := updateSessionCurrentImageTx(tx, sessionID, 0); err != nil {
@@ -523,6 +513,18 @@ func updateSessionMetaTx(tx *sql.Tx, sessionID, title, summary string) error {
 	_, err := tx.Exec(`
 		UPDATE sessions
 		SET title = ?, summary = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, title, summary, sessionID)
+	return err
+}
+
+func updateSessionMetaIfEmptyTx(tx *sql.Tx, sessionID, title, summary string) error {
+	_, err := tx.Exec(`
+		UPDATE sessions
+		SET
+			title = CASE WHEN title = '' THEN ? ELSE title END,
+			summary = CASE WHEN summary = '' THEN ? ELSE summary END,
+			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`, title, summary, sessionID)
 	return err
@@ -657,11 +659,7 @@ func restoreSessionVersionTx(tx *sql.Tx, sessionID string, version *SessionVersi
 
 	event.ImageID = restore.ImageID
 	event.Dev = restore.Prompt
-	title, summary := sessionMetaFromText(restore.Prompt)
 	if err := updateSessionDevTx(tx, sessionID, restore.Prompt); err != nil {
-		return nil, err
-	}
-	if err := updateSessionMetaTx(tx, sessionID, title, summary); err != nil {
 		return nil, err
 	}
 	if err := updateSessionCurrentImageTx(tx, sessionID, restore.ImageID); err != nil {
