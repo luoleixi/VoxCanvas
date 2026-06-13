@@ -1,0 +1,40 @@
+package db
+
+import "testing"
+
+func TestInsertSessionEvent(t *testing.T) {
+	dir := t.TempDir()
+	database, err := Open(dir)
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer database.Close()
+
+	if err := database.UpsertSession("client_test", "sess_test"); err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	if err := database.InsertSessionEvent(SessionEvent{
+		SessionID:       "sess_test",
+		EventType:       "requirement_refined",
+		PreviousImageID: 12,
+		Sentence:        "画一只猫",
+		Dev:             "一只猫",
+		BeforeDev:       "",
+		BeforeImageID:   12,
+	}); err != nil {
+		t.Fatalf("failed to insert session event: %v", err)
+	}
+
+	var count int
+	if err := database.conn.QueryRow(`
+		SELECT COUNT(*)
+		FROM session_events
+		WHERE session_id = ? AND event_type = ? AND sentence = ? AND dev = ?
+	`, "sess_test", "requirement_refined", "画一只猫", "一只猫").Scan(&count); err != nil {
+		t.Fatalf("failed to query session event: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 event, got %d", count)
+	}
+}
