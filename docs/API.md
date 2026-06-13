@@ -80,7 +80,7 @@ Set-Cookie: vox_session_id=sess_xxx; HttpOnly; SameSite=Lax; Path=/; Max-Age=315
 
 ### `GET /api/v1/session/list`
 
-查询当前匿名用户 `vox_client_id` 下的历史会话摘要，默认返回最近 20 条。
+查询当前匿名用户 `vox_client_id` 下的历史会话摘要，默认返回最近 20 条。该接口用于前端主动展示历史会话列表；如果用户完全通过语音操作，也可以使用 [展示历史会话指令](#新增能力展示历史会话指令)。
 
 请求：
 
@@ -141,6 +141,151 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
 
 如果请求中没有当前会话 Cookie，后端会自动创建一个新会话并写入 `vox_session_id`。
 
+### 新增能力：展示历史会话指令
+
+展示历史会话不新增独立接口，复用绘图理解接口：
+
+```http
+POST /api/v1/draw/understand
+Content-Type: application/json
+Cookie: vox_client_id=client_xxx; vox_session_id=sess_current_xxx
+```
+
+前端发送 JSON：
+
+```json
+{
+  "sentences": "展示历史会话"
+}
+```
+
+也可以发送类似语音文本：
+
+```json
+{
+  "sentences": "读一下最近会话"
+}
+```
+
+后端会查询当前 `vox_client_id` 下最近的历史会话，排除当前会话后，把标题和摘要整理为可展示、可播报的文本。
+
+返回 JSON：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "op": "list_sessions",
+    "text": "最近历史会话：\n1. 海边小屋：夕阳下的海边小屋，天空有几只海鸥\n2. 月光猫：一只猫在月光下散步，画面安静柔和",
+    "image": "",
+    "sessions": [
+      {
+        "session_id": "sess_20260613_235959_abcd1234",
+        "title": "海边小屋",
+        "summary": "夕阳下的海边小屋，天空有几只海鸥"
+      },
+      {
+        "session_id": "sess_20260613_235800_efgh5678",
+        "title": "月光猫",
+        "summary": "一只猫在月光下散步，画面安静柔和"
+      }
+    ]
+  }
+}
+```
+
+`sessions` 字段说明：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `session_id` | string | 历史会话 ID，用于前端渲染 key 或调试；语音切换不需要前端传回该字段 |
+| `title` | string | 历史会话标题 |
+| `summary` | string | 历史会话摘要 |
+
+如果没有历史会话：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "op": "list_sessions",
+    "text": "暂无历史会话。",
+    "image": "",
+    "sessions": []
+  }
+}
+```
+
+前端收到 `op=list_sessions` 后，应直接展示或语音播报 `text`。用户听到或看到标题摘要后，可以继续说“打开海边小屋那张”，前端仍发送同一个绘图理解接口，由后端执行 [切回历史会话](#新增能力切回历史会话)。
+
+### 新增能力：切回历史会话
+
+切回历史会话不新增独立接口，复用绘图理解接口：
+
+```http
+POST /api/v1/draw/understand
+Content-Type: application/json
+Cookie: vox_client_id=client_xxx; vox_session_id=sess_current_xxx
+```
+
+前端发送 JSON：
+
+```json
+{
+  "sentences": "打开海边小屋那张"
+}
+```
+
+后端会在当前 `vox_client_id` 对应的历史会话中匹配目标会话，匹配维度包括 `sessions.title`、`sessions.summary`、`sessions.dev` 和最近更新时间。切换动作不要求前端发送 `session_id`；即使前端已经通过 `list_sessions` 展示了历史会话列表，后续切换时仍只发送用户语音文本。
+
+切回历史会话成功时，响应头会更新当前会话 Cookie：
+
+```http
+Set-Cookie: vox_session_id=sess_history_xxx; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000
+```
+
+返回 JSON：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "op": "switch_session",
+    "text": "",
+    "image": "",
+    "sessions": []
+  }
+}
+```
+
+如果用户说的是“切换会话”“新会话”等没有历史目标的指令，或后端没有匹配到历史会话，则会创建新会话并写入新的 `vox_session_id`：
+
+```json
+{
+  "sentences": "切换会话"
+}
+```
+
+返回 JSON 与切回历史会话一致：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "op": "switch_session",
+    "text": "",
+    "image": "",
+    "sessions": []
+  }
+}
+```
+
+前端判断是否切换完成时，以 HTTP 响应成功和浏览器保存的新 `vox_session_id` 为准；`session_id` 不放入响应体，接口始终保持 `op/text/image/sessions` 四个业务字段。
+
 ## 6. 绘图响应数据
 
 `POST /api/v1/draw/understand` 的 `data` 固定返回：
@@ -149,15 +294,17 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
 {
   "op": "requirement",
   "text": "一只猫在月光下散步，画面氛围安静柔和",
-  "image": ""
+  "image": "",
+  "sessions": []
 }
 ```
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `op` | string | 操作类型 |
-| `text` | string | `requirement` 时返回精炼后的绘图需求；`undo` 时返回撤销到的生成图提示词；其他情况为空字符串 |
+| `text` | string | `requirement` 时返回精炼后的绘图需求；`undo` 时返回撤销到的生成图提示词；`list_sessions` 时返回可展示/播报的历史会话摘要；其他情况为空字符串 |
 | `image` | string | `generate_image` 时返回图片 base64；`undo` 时返回撤销到的生成图 base64；其他情况为空字符串 |
+| `sessions` | array | 固定返回；`list_sessions` 时返回历史会话列表，其他操作返回空数组 `[]` |
 
 `op` 枚举：
 
@@ -167,6 +314,7 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
 | `generate_image` | 用户要求生成图片 |
 | `undo` | 用户要求撤销 |
 | `clear` | 用户要求清空当前会话 |
+| `list_sessions` | 用户要求展示或播报历史会话标题摘要 |
 | `switch_session` | 用户要求切换会话；可切回历史会话，匹配不到时新建并切换到一个新会话 |
 | `unknown` | 无法识别的语音文本 |
 
@@ -181,7 +329,8 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
   "data": {
     "op": "requirement",
     "text": "一只猫在月光下散步，画面氛围安静柔和",
-    "image": ""
+    "image": "",
+    "sessions": []
   }
 }
 ```
@@ -195,7 +344,8 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
   "data": {
     "op": "generate_image",
     "text": "",
-    "image": "iVBORw0KGgoAAAANSUhEUgAAA..."
+    "image": "iVBORw0KGgoAAAANSUhEUgAAA...",
+    "sessions": []
   }
 }
 ```
@@ -211,7 +361,8 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
   "data": {
     "op": "undo",
     "text": "一只猫在月光下散步，画面氛围安静柔和",
-    "image": "iVBORw0KGgoAAAANSUhEUgAAA..."
+    "image": "iVBORw0KGgoAAAANSUhEUgAAA...",
+    "sessions": []
   }
 }
 ```
@@ -225,7 +376,8 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
   "data": {
     "op": "undo",
     "text": "",
-    "image": ""
+    "image": "",
+    "sessions": []
   }
 }
 ```
@@ -241,14 +393,15 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
   "data": {
     "op": "clear",
     "text": "",
-    "image": ""
+    "image": "",
+    "sessions": []
   }
 }
 ```
 
 ### 切换会话
 
-当前版本中，“切换会话”会先尝试在当前匿名用户的历史会话中匹配目标，例如“回到海边小屋”“打开上一个会话”。如果匹配成功，后端会把 `vox_session_id` 更新为历史会话 ID；如果匹配不到，后端会创建一个新会话并切换过去。
+当前版本中，“切换会话”会先尝试在当前匿名用户的历史会话中匹配目标，例如“回到海边小屋”“打开上一个会话”。如果匹配成功，后端会把 `vox_session_id` 更新为历史会话 ID；如果匹配不到，后端会创建一个新会话并切换过去。请求和响应 JSON 见 [新增能力：切回历史会话](#新增能力切回历史会话)。
 
 ```json
 {
@@ -257,7 +410,29 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
   "data": {
     "op": "switch_session",
     "text": "",
-    "image": ""
+    "image": "",
+    "sessions": []
+  }
+}
+```
+
+### 展示历史会话
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "op": "list_sessions",
+    "text": "最近历史会话：\n1. 海边小屋：夕阳下的海边小屋，天空有几只海鸥",
+    "image": "",
+    "sessions": [
+      {
+        "session_id": "sess_20260613_235959_abcd1234",
+        "title": "海边小屋",
+        "summary": "夕阳下的海边小屋，天空有几只海鸥"
+      }
+    ]
   }
 }
 ```
@@ -271,7 +446,8 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
   "data": {
     "op": "unknown",
     "text": "",
-    "image": ""
+    "image": "",
+    "sessions": []
   }
 }
 ```
@@ -319,6 +495,15 @@ curl -i -c cookies.txt -b cookies.txt \
 ```bash
 curl -i -c cookies.txt -b cookies.txt \
   http://localhost:6060/api/v1/session/list?limit=20
+```
+
+通过语音指令展示历史会话：
+
+```bash
+curl -i -c cookies.txt -b cookies.txt \
+  -X POST http://localhost:6060/api/v1/draw/understand \
+  -H "Content-Type: application/json" \
+  -d "{\"sentences\":\"展示历史会话\"}"
 ```
 
 ## 9. 错误响应

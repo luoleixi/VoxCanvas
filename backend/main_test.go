@@ -142,6 +142,14 @@ func TestDrawUnderstandHandler(t *testing.T) {
 	if data["image"] != "" {
 		t.Fatalf("expected empty image for requirement, got %v", data["image"])
 	}
+
+	sessions, ok := data["sessions"].([]interface{})
+	if !ok {
+		t.Fatalf("expected sessions to be an array, got %T", data["sessions"])
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("expected empty sessions for requirement, got %v", sessions)
+	}
 }
 
 func TestDrawUnderstandSwitchSessionUpdatesCookie(t *testing.T) {

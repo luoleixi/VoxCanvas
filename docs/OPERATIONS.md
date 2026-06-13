@@ -55,7 +55,7 @@ grep "\[SESSION\]" /var/log/voxcanvas/voxcanvas-backend.log
 | `[LOGGER]` | 日志系统初始化 |
 | `[CONFIG]` | 后端配置，API Key 会脱敏 |
 | `[SESSION]` | 会话创建 |
-| `[DRAW]` | 语音理解、意图识别、精炼、生成、撤销、清空、切换会话 |
+| `[DRAW]` | 语音理解、意图识别、精炼、生成、撤销、清空、展示历史会话、切换会话 |
 | `[LLM]` | 文本大模型请求与响应 |
 | `[IMAGE]` | 图片生成模型请求与响应 |
 | `[DB]` | SQLite 事务写入与事件日志写入 |
@@ -88,6 +88,16 @@ tail -f /var/log/voxcanvas/voxcanvas-backend.log
 - `duration_ms`
 - `image_id`
 - `previous_image_id`
+
+常见 `op` 包括：
+
+- `requirement`
+- `generate_image`
+- `undo`
+- `clear`
+- `list_sessions`
+- `switch_session`
+- `unknown`
 
 ## 注意事项
 

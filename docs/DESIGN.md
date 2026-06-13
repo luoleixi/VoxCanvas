@@ -121,6 +121,7 @@
 | `image_generated` | 图片生成完成 |
 | `undo` | 执行撤销 |
 | `clear` | 清空当前会话 |
+| `list_sessions` | 展示或播报历史会话摘要 |
 | `switch_session` | 切换历史会话；匹配不到时新建会话 |
 
 ### `session_versions`
@@ -148,6 +149,7 @@
 | 图片生成成功 | 写入 `images`，创建 `session_versions(image_generated)` 节点，仅当 `title/summary` 为空时写入会话标题摘要，更新当前版本和撤销目标，写入 `session_events(image_generated)`，清空 `sessions.dev` |
 | 撤销 | 查询 `undo_version_id` 对应版本，恢复 `sessions.dev/current_image_id/current_version_id`，前移撤销目标，写入 `session_events(undo)` |
 | 清空 | 创建 `session_versions(clear)` 节点，清空 `sessions.dev/current_image_id`，将撤销目标指向清空前版本，写入 `session_events(clear)` |
+| 展示历史会话 | 查询当前匿名用户的历史会话，返回可展示/播报的摘要文本，写入 `session_events(list_sessions)` |
 | 切换会话 | 匹配历史会话或创建新 `sessions`，写入 `session_events(switch_session)` |
 
 如果事务内任一写入失败，本次业务状态和事件日志都会一起回滚，避免出现状态与日志不一致。
@@ -200,6 +202,63 @@
 
 无数据库模式下，内存 `GeneratedStore` 会保留历史生成结果。清空只会把当前显示游标置空，不删除历史栈，因此后续撤销仍能恢复清空前结果。
 
+## 展示历史会话
+
+用户打开网站后不需要使用鼠标和键盘，历史会话展示也通过语音指令触发。前端仍调用统一的绘图理解接口：
+
+```json
+{
+  "sentences": "展示历史会话"
+}
+```
+
+后端识别为 `op=list_sessions` 后：
+
+1. 根据 Cookie 中的 `vox_client_id` 查询当前匿名用户的历史会话。
+2. 排除当前 `vox_session_id`，避免把用户正在编辑的会话作为切换候选反复播报。
+3. 默认整理最近 5 条历史会话。
+4. 每条优先使用稳定的 `sessions.title` 作为标题。
+5. 如果标题为空，用 `summary` 或 `dev` 截断生成兜底标题。
+6. 每条摘要优先使用 `sessions.summary`，为空时使用 `sessions.dev`，仍为空则显示“暂无摘要”。
+7. 返回 `op=list_sessions`，`text` 为可展示/播报的历史会话文本，`sessions` 为结构化历史会话列表，`image` 为空。
+8. 写入 `session_events(list_sessions)`，便于后续在云服务器日志中追踪用户何时请求查看历史。
+
+返回示例：
+
+```json
+{
+  "op": "list_sessions",
+  "text": "最近历史会话：\n1. 海边小屋：夕阳下的海边小屋，天空有几只海鸥",
+  "image": "",
+  "sessions": [
+    {
+      "session_id": "sess_20260613_235959_abcd1234",
+      "title": "海边小屋",
+      "summary": "夕阳下的海边小屋，天空有几只海鸥"
+    }
+  ]
+}
+```
+
+如果没有历史会话，返回：
+
+```json
+{
+  "op": "list_sessions",
+  "text": "暂无历史会话。",
+  "image": "",
+  "sessions": []
+}
+```
+
+该能力与切回历史会话的联动方式：
+
+1. 用户说“展示历史会话”。
+2. 前端可以用 `sessions` 渲染历史会话卡片，也可以直接展示或播报 `text`。
+3. 用户根据听到或看到的内容说“打开海边小屋那张”。
+4. 后端再次通过 `switch_session` 在同一 `vox_client_id` 下匹配 `title/summary/dev`。
+5. 匹配成功后更新 `vox_session_id`，后续绘图请求自动进入该历史会话。
+
 ## 切回历史会话
 
 当前版本的 `switch_session` 已支持切回历史会话。前端仍只发送语音文本：
@@ -215,7 +274,7 @@
 1. 根据 `vox_client_id` 查询当前匿名用户的历史会话。
 2. 如果语音明确表示“新建会话”“新会话”“切换会话”，则创建新会话。
 3. 否则根据语音文本识别切换目标，例如“上一个会话”“最近一个会话”“海边小屋”。
-4. 在该用户自己的会话列表中匹配 `title`、`summary` 和更新时间。
+4. 在该用户自己的会话列表中匹配 `title`、`summary`、`dev` 和更新时间。
 5. 如果 `title/summary` 匹配成功，切换到匹配到的历史会话。
 6. 如果是“上一个”“最近”“刚才”等泛化指令，切换到最近更新的其他会话。
 7. 如果无法匹配，创建新会话。
@@ -233,7 +292,7 @@
 7. 如果没有明确标题或摘要命中，但语音包含“上一个”“最近”“刚才”“之前”等泛化历史表达，则选择最近更新的其他会话。
 8. 如果仍无法匹配，后端回退为创建新会话，保持语音交互不中断。
 9. 切换成功后，后端写入 `session_events(switch_session)`，并更新或创建目标 `sessions` 记录。历史会话被切回时，会把目标会话的 `dev` 加载到内存 `DevStore`，让后续补充描述接续该会话上下文。
-10. 接口响应仍保持 `op/text/image` 三字段；目标会话 ID 不放入响应体，由 handler 根据内部 `SessionID` 写入 `Set-Cookie: vox_session_id=...`，前端通过浏览器 Cookie 自动进入目标会话。
+10. 接口响应固定保持 `op/text/image/sessions` 四个业务字段；目标会话 ID 不放入响应体，由 handler 根据内部 `SessionID` 写入 `Set-Cookie: vox_session_id=...`，前端通过浏览器 Cookie 自动进入目标会话。
 
 当前限制：
 

@@ -178,6 +178,45 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 			SessionID: targetSessionID,
 		}, nil
 
+	case "list_sessions":
+		text := "暂无历史会话。"
+		sessionItems := make([]model.DrawSessionData, 0)
+		if s.Sessions != nil {
+			formatted, historySessions, err := s.Sessions.FormatHistoryForVoice(clientID, sessionID, 5)
+			if err != nil {
+				return nil, err
+			}
+			text = formatted
+			for _, session := range historySessions {
+				sessionItems = append(sessionItems, model.DrawSessionData{
+					SessionID: session.SessionID,
+					Title:     session.Title,
+					Summary:   session.Summary,
+				})
+			}
+		}
+		if s.DB != nil {
+			if err := s.DB.InsertSessionEvent(db.SessionEvent{
+				SessionID:       sessionID,
+				EventType:       "list_sessions",
+				SentenceID:      sentenceID,
+				PreviousImageID: previousImageID,
+				Sentence:        sentence,
+				Dev:             beforeDev,
+				BeforeDev:       beforeDev,
+				BeforeImageID:   previousImageID,
+			}); err != nil {
+				return nil, err
+			}
+		}
+		log.Printf("[DRAW] list_sessions client_id=%s session_id=%s text_len=%d", clientID, sessionID, len(text))
+		return &model.DrawData{
+			Op:       "list_sessions",
+			Text:     text,
+			Image:    "",
+			Sessions: sessionItems,
+		}, nil
+
 	case "undo":
 		if s.DB != nil {
 			image, err := s.DB.RecordUndoToPreviousImage(sessionID, db.SessionEvent{
