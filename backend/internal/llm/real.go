@@ -150,7 +150,7 @@ func (c *RealClient) chat(system, user string) (string, error) {
 	log.Printf("[LLM] response <- status=%d body=%s", resp.StatusCode, truncate(string(body), 500))
 
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("deepseek api error %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("dashscope chat api error %d: %s", resp.StatusCode, string(body))
 	}
 
 	var cr chatResponse
@@ -159,7 +159,7 @@ func (c *RealClient) chat(system, user string) (string, error) {
 	}
 
 	if len(cr.Choices) == 0 {
-		return "", errors.New("deepseek returned empty choices")
+		return "", errors.New("dashscope chat api returned empty choices")
 	}
 
 	result := strings.TrimSpace(cr.Choices[0].Message.Content)
