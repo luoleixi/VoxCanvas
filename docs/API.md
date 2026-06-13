@@ -58,8 +58,8 @@ fetch(url, {
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `op` | string | 是 | 操作类型 |
-| `text` | string | 是 | 仅当 `op=requirement` 时返回精炼后的绘图需求；其他情况固定为空字符串 |
-| `image` | string | 是 | 仅当 `op=generate_image` 时返回图片 base64；其他情况固定为空字符串 |
+| `text` | string | 是 | `requirement` 时返回精炼后的绘图需求；`undo` 时返回撤销到的上一张生成图提示词；其他情况固定为空字符串 |
+| `image` | string | 是 | `generate_image` 时返回图片 base64；`undo` 时返回撤销到的上一张生成图 base64；其他情况固定为空字符串 |
 
 `op` 枚举：
 
@@ -212,6 +212,22 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
   "msg": "success",
   "data": {
     "op": "undo",
+    "text": "一只猫在月光下散步，画面氛围安静柔和",
+    "image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ..."
+  }
+}
+```
+
+当前版本的撤销语义是：直接撤销到当前会话上一次成功生成的图片及其生成文本。后端会把该文本恢复为当前会话的 `dev`，用户可以继续基于这张图的文本进行语音修改。
+
+如果当前会话还没有成功生成过图片，响应仍为：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "op": "undo",
     "text": "",
     "image": ""
   }
@@ -352,7 +368,62 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
 6. 用户说“切换会话”，后端创建新会话并更新 `vox_session_id`。
 7. 后续语音请求进入新会话，不影响旧会话内容。
 
-## 8. curl 示例
+## 8. 数据记录与后续日志表设计
+
+### 当前数据记录
+
+`sentences` 表记录用户每次语音文本，并通过 `session_id` 绑定会话。
+
+| 字段 | 说明 |
+| --- | --- |
+| `session_id` | 当前语音文本所属会话 |
+| `previous_image_id` | 用户说出这句话时，该会话上一张成功生成图片的 ID；没有上一张图时为空 |
+| `content` | 用户语音识别出的原始文本 |
+| `type` | 当前固定为 `user_input` |
+| `created_at` | 创建时间 |
+
+`images` 表记录每次成功生成图片的结果。
+
+| 字段 | 说明 |
+| --- | --- |
+| `session_id` | 图片所属会话 |
+| `prompt` | 生成该图片使用的提示词 |
+| `base64_data` | 图片 base64 |
+| `created_at` | 创建时间 |
+
+`previous_image_id` 用于把每句话和“说出这句话之前的上一张生成图”关联起来，方便后续实现更精细的撤销、历史查看和回放。
+
+### 后续扩展：session_events 日志表
+
+后续如果需要完整操作回放、多步撤销、恢复历史会话，建议新增事件日志表：
+
+```sql
+CREATE TABLE session_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    sentence TEXT,
+    image_id INTEGER,
+    previous_image_id INTEGER,
+    dev TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+建议事件类型：
+
+| event_type | 说明 |
+| --- | --- |
+| `sentence` | 用户输入了一句话 |
+| `requirement_refined` | 需求精炼完成 |
+| `image_generated` | 图片生成完成 |
+| `undo` | 执行撤销 |
+| `clear` | 清空当前会话 |
+| `switch_session` | 切换到新会话 |
+
+该表作为未来设计，当前版本先通过 `sentences.previous_image_id` 和内存中的最近生成结果支持基础撤销。
+
+## 9. curl 示例
 
 使用 Cookie 文件保存匿名用户和当前会话：
 
@@ -390,7 +461,7 @@ curl -i -c cookies.txt -b cookies.txt \
   -d "{\"sentences\":\"切换会话\"}"
 ```
 
-## 9. 错误响应
+## 10. 错误响应
 
 ### 请求体错误
 
@@ -428,7 +499,7 @@ HTTP 状态码：`500 Internal Server Error`
 - SQLite 写入失败。
 - 服务端内部处理异常。
 
-## 10. 健康检查
+## 11. 健康检查
 
 ### `GET /health`
 

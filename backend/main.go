@@ -57,9 +57,11 @@ func main() {
 	}
 
 	devStore := service.NewDevStore()
+	generatedStore := service.NewGeneratedStore()
 	sessionSvc := &service.SessionService{DB: database}
 	drawSvc := &service.DrawService{
 		Dev:        devStore,
+		Generated:  generatedStore,
 		Sessions:   sessionSvc,
 		Classifier: classifier,
 		Refiner:    refiner,
