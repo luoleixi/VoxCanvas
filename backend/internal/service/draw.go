@@ -45,6 +45,9 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 		if err != nil {
 			return nil, err
 		}
+		if err := s.setSessionDev(sessionID, refined); err != nil {
+			return nil, err
+		}
 		return &model.DrawData{
 			Op:    "requirement",
 			Text:  refined,
@@ -57,6 +60,9 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 		if err != nil {
 			log.Printf("[DRAW] image gen skipped: %v, return prompt as content", err)
 			s.Dev.Set(sessionID, "")
+			if err := s.setSessionDev(sessionID, ""); err != nil {
+				return nil, err
+			}
 			return &model.DrawData{
 				Op:    "generate_image",
 				Text:  "",
@@ -78,6 +84,9 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 			})
 		}
 		s.Dev.Set(sessionID, "")
+		if err := s.setSessionDev(sessionID, ""); err != nil {
+			return nil, err
+		}
 		return &model.DrawData{
 			Op:    "generate_image",
 			Text:  "",
@@ -107,6 +116,9 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 			return &model.DrawData{Op: "undo", Text: "", Image: ""}, nil
 		}
 		s.Dev.Set(sessionID, result.Text)
+		if err := s.setSessionDev(sessionID, result.Text); err != nil {
+			return nil, err
+		}
 		return &model.DrawData{
 			Op:    "undo",
 			Text:  result.Text,
@@ -116,6 +128,9 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 	case "clear", "unknown":
 		if intent.Op == "clear" {
 			s.Dev.Set(sessionID, "")
+			if err := s.setSessionDev(sessionID, ""); err != nil {
+				return nil, err
+			}
 			if s.Generated != nil {
 				s.Generated.Clear(sessionID)
 			}
@@ -133,4 +148,11 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 			Image: "",
 		}, nil
 	}
+}
+
+func (s *DrawService) setSessionDev(sessionID, dev string) error {
+	if s.Sessions == nil {
+		return nil
+	}
+	return s.Sessions.SetDev(sessionID, dev)
 }

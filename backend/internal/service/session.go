@@ -27,6 +27,13 @@ func (s *SessionService) Touch(clientID, sessionID string) error {
 	return s.DB.UpsertSession(clientID, sessionID)
 }
 
+func (s *SessionService) SetDev(sessionID, dev string) error {
+	if s == nil || s.DB == nil {
+		return nil
+	}
+	return s.DB.UpdateSessionDev(sessionID, dev)
+}
+
 func NewSessionID() string {
 	now := time.Now()
 	return fmt.Sprintf("sess_%s_%s_%s", now.Format("20060102"), now.Format("150405"), randomSessionHex(4))

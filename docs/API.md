@@ -372,6 +372,16 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
 
 ### 当前数据记录
 
+`sessions` 表记录匿名用户下的会话，并保存当前精炼后的 `dev`。
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | 会话 ID |
+| `client_id` | 匿名用户标识 |
+| `dev` | 当前会话精炼后的绘图需求文本 |
+| `created_at` | 创建时间 |
+| `updated_at` | 最近更新时间 |
+
 `sentences` 表记录用户每次语音文本，并通过 `session_id` 绑定会话。
 
 | 字段 | 说明 |
@@ -422,6 +432,77 @@ CREATE TABLE session_events (
 | `switch_session` | 切换到新会话 |
 
 该表作为未来设计，当前版本先通过 `sentences.previous_image_id` 和内存中的最近生成结果支持基础撤销。
+
+### 后续扩展：带参数撤销
+
+当前版本中，用户说“撤销”时，默认撤销到当前会话上一次成功生成的图片及其生成文本。后续可以把撤销扩展为带参数的语音指令，让用户通过自然语言决定撤销目标。
+
+建议继续保持前端请求不变：
+
+```json
+{
+  "sentences": "撤销到第二次生成的图"
+}
+```
+
+后端内部可以让 LLM 在意图识别阶段解析撤销参数，但最终返回给前端仍保持 `op/text/image` 三字段。
+
+内部撤销目标建议：
+
+| undo_target | 说明 |
+| --- | --- |
+| `last_requirement` | 撤销到上一次需求精炼后的文本 |
+| `last_image` | 撤销到上一次成功生成的图片 |
+| `nth_requirement` | 撤销到第 N 次需求精炼 |
+| `nth_image` | 撤销到第 N 次成功生成的图片 |
+| `previous_step` | 按事件时间线撤销一步 |
+| `unknown` | 无法识别撤销目标 |
+
+语音示例：
+
+| 语音 | undo_target | 说明 |
+| --- | --- | --- |
+| “撤销到上一次需求” | `last_requirement` | 返回上一版精炼文本，`image` 为空 |
+| “回到上一张图” | `last_image` | 返回上一张图的 prompt 和 base64 |
+| “撤销到第二次生成的图” | `nth_image` | 返回第 2 次生成图的 prompt 和 base64 |
+| “回到第三版需求” | `nth_requirement` | 返回第 3 次需求精炼文本，`image` 为空 |
+| “撤销一步” | `previous_step` | 根据 `session_events` 时间线回退一步 |
+
+后端执行建议：
+
+1. LLM 只负责解析 `op=undo`、`undo_target` 和可选的序号 `undo_index`。
+2. 后端根据当前 `vox_session_id` 查询 `session_events`。
+3. 如果目标是需求精炼，查找 `requirement_refined` 事件并恢复 `dev`。
+4. 如果目标是生成图，查找 `image_generated` 事件，再根据 `image_id` 查询 `images.base64_data`，同时恢复 `dev`。
+5. 如果无法匹配目标，返回 `op=undo`，且 `text`、`image` 均为空。
+
+返回示例：撤销到文本版本
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "op": "undo",
+    "text": "一只猫坐在月光下，背景是安静的森林",
+    "image": ""
+  }
+}
+```
+
+返回示例：撤销到生成图版本
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "op": "undo",
+    "text": "一只猫坐在月光下，背景是安静的森林",
+    "image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ..."
+  }
+}
+```
 
 ## 9. curl 示例
 

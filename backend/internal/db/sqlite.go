@@ -38,6 +38,7 @@ func Open(dataDir string) (*DB, error) {
 		CREATE TABLE IF NOT EXISTS sessions (
 			id TEXT PRIMARY KEY,
 			client_id TEXT NOT NULL,
+			dev TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -63,6 +64,9 @@ func Open(dataDir string) (*DB, error) {
 		return nil, err
 	}
 	if err := ensureColumn(conn, "sentences", "session_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return nil, err
+	}
+	if err := ensureColumn(conn, "sessions", "dev", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return nil, err
 	}
 	if err := ensureColumn(conn, "sentences", "previous_image_id", "INTEGER"); err != nil {
@@ -127,6 +131,15 @@ func (d *DB) UpsertSession(clientID, sessionID string) error {
 			client_id = excluded.client_id,
 			updated_at = CURRENT_TIMESTAMP
 	`, sessionID, clientID)
+	return err
+}
+
+func (d *DB) UpdateSessionDev(sessionID, dev string) error {
+	_, err := d.conn.Exec(`
+		UPDATE sessions
+		SET dev = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, dev, sessionID)
 	return err
 }
 
