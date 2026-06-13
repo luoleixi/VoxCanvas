@@ -10,13 +10,7 @@ import (
 )
 
 type DB struct {
-	conn  *sql.DB
-	queue chan writeJob
-}
-
-type writeJob struct {
-	query string
-	args  []interface{}
+	conn *sql.DB
 }
 
 func Open(dataDir string) (*DB, error) {
@@ -116,12 +110,7 @@ func Open(dataDir string) (*DB, error) {
 		return nil, err
 	}
 
-	d := &DB{
-		conn:  conn,
-		queue: make(chan writeJob, 256),
-	}
-	go d.worker()
-	return d, nil
+	return &DB{conn: conn}, nil
 }
 
 func ensureColumn(conn *sql.DB, table, column, definition string) error {
@@ -155,47 +144,90 @@ func ensureColumn(conn *sql.DB, table, column, definition string) error {
 	return err
 }
 
-func (d *DB) worker() {
-	for job := range d.queue {
-		if _, err := d.conn.Exec(job.query, job.args...); err != nil {
-			log.Printf("[DB] async_write_error err=%v query=%q", err, job.query)
-		}
-	}
-}
-
 func (d *DB) UpsertSession(clientID, sessionID string) error {
-	_, err := d.conn.Exec(`
-		INSERT INTO sessions (id, client_id, updated_at)
-		VALUES (?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(id) DO UPDATE SET
-			client_id = excluded.client_id,
-			updated_at = CURRENT_TIMESTAMP
-	`, sessionID, clientID)
-	return err
+	return d.withTx(func(tx *sql.Tx) error {
+		return upsertSessionTx(tx, clientID, sessionID)
+	})
 }
 
 func (d *DB) UpdateSessionDev(sessionID, dev string) error {
-	_, err := d.conn.Exec(`
-		UPDATE sessions
-		SET dev = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, dev, sessionID)
-	return err
+	return d.withTx(func(tx *sql.Tx) error {
+		return updateSessionDevTx(tx, sessionID, dev)
+	})
 }
 
-func (d *DB) InsertSentence(sessionID string, previousImageID int64, content, typ string) {
-	d.queue <- writeJob{
-		query: "INSERT INTO sentences (session_id, previous_image_id, content, type) VALUES (?, NULLIF(?, 0), ?, ?)",
-		args:  []interface{}{sessionID, previousImageID, content, typ},
-	}
+func (d *DB) RecordSentence(sessionID string, previousImageID int64, content, typ, beforeDev string) (int64, error) {
+	var sentenceID int64
+	err := d.withTx(func(tx *sql.Tx) error {
+		var err error
+		sentenceID, err = insertSentenceTx(tx, sessionID, previousImageID, content, typ)
+		if err != nil {
+			return err
+		}
+		return insertSessionEventTx(tx, SessionEvent{
+			SessionID:       sessionID,
+			EventType:       "sentence",
+			SentenceID:      sentenceID,
+			PreviousImageID: previousImageID,
+			Sentence:        content,
+			BeforeDev:       beforeDev,
+			BeforeImageID:   previousImageID,
+		})
+	})
+	return sentenceID, err
 }
 
-func (d *DB) InsertImage(sessionID, prompt, base64Data string) (int64, error) {
-	result, err := d.conn.Exec("INSERT INTO images (session_id, prompt, base64_data) VALUES (?, ?, ?)", sessionID, prompt, base64Data)
-	if err != nil {
-		return 0, err
-	}
-	return result.LastInsertId()
+func (d *DB) RecordRequirementRefined(sessionID string, event SessionEvent) error {
+	return d.withTx(func(tx *sql.Tx) error {
+		if err := updateSessionDevTx(tx, sessionID, event.Dev); err != nil {
+			return err
+		}
+		return insertSessionEventTx(tx, event)
+	})
+}
+
+func (d *DB) RecordGeneratedImage(sessionID, prompt, base64Data string, event SessionEvent) (int64, error) {
+	var imageID int64
+	err := d.withTx(func(tx *sql.Tx) error {
+		var err error
+		imageID, err = insertImageTx(tx, sessionID, prompt, base64Data)
+		if err != nil {
+			return err
+		}
+		event.ImageID = imageID
+		if err := insertSessionEventTx(tx, event); err != nil {
+			return err
+		}
+		return updateSessionDevTx(tx, sessionID, "")
+	})
+	return imageID, err
+}
+
+func (d *DB) RecordUndo(sessionID, dev string, event SessionEvent) error {
+	return d.withTx(func(tx *sql.Tx) error {
+		if err := updateSessionDevTx(tx, sessionID, dev); err != nil {
+			return err
+		}
+		return insertSessionEventTx(tx, event)
+	})
+}
+
+func (d *DB) RecordClear(sessionID string, event SessionEvent) error {
+	return d.withTx(func(tx *sql.Tx) error {
+		if err := updateSessionDevTx(tx, sessionID, ""); err != nil {
+			return err
+		}
+		return insertSessionEventTx(tx, event)
+	})
+}
+
+func (d *DB) RecordSwitchSession(clientID, newSessionID string, event SessionEvent) error {
+	return d.withTx(func(tx *sql.Tx) error {
+		if err := upsertSessionTx(tx, clientID, newSessionID); err != nil {
+			return err
+		}
+		return insertSessionEventTx(tx, event)
+	})
 }
 
 type SessionEvent struct {
@@ -211,8 +243,69 @@ type SessionEvent struct {
 }
 
 func (d *DB) InsertSessionEvent(event SessionEvent) error {
+	return d.withTx(func(tx *sql.Tx) error {
+		return insertSessionEventTx(tx, event)
+	})
+}
+
+func (d *DB) withTx(fn func(*sql.Tx) error) error {
+	tx, err := d.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func upsertSessionTx(tx *sql.Tx, clientID, sessionID string) error {
+	_, err := tx.Exec(`
+		INSERT INTO sessions (id, client_id, updated_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(id) DO UPDATE SET
+			client_id = excluded.client_id,
+			updated_at = CURRENT_TIMESTAMP
+	`, sessionID, clientID)
+	return err
+}
+
+func updateSessionDevTx(tx *sql.Tx, sessionID, dev string) error {
+	_, err := tx.Exec(`
+		UPDATE sessions
+		SET dev = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, dev, sessionID)
+	return err
+}
+
+func insertSentenceTx(tx *sql.Tx, sessionID string, previousImageID int64, content, typ string) (int64, error) {
+	result, err := tx.Exec(
+		"INSERT INTO sentences (session_id, previous_image_id, content, type) VALUES (?, NULLIF(?, 0), ?, ?)",
+		sessionID,
+		previousImageID,
+		content,
+		typ,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func insertImageTx(tx *sql.Tx, sessionID, prompt, base64Data string) (int64, error) {
+	result, err := tx.Exec("INSERT INTO images (session_id, prompt, base64_data) VALUES (?, ?, ?)", sessionID, prompt, base64Data)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func insertSessionEventTx(tx *sql.Tx, event SessionEvent) error {
 	log.Printf("[DB] session_event session_id=%s event_type=%s image_id=%d previous_image_id=%d", event.SessionID, event.EventType, event.ImageID, event.PreviousImageID)
-	_, err := d.conn.Exec(`
+	_, err := tx.Exec(`
 		INSERT INTO session_events (
 			session_id,
 			event_type,
@@ -240,6 +333,5 @@ func (d *DB) InsertSessionEvent(event SessionEvent) error {
 }
 
 func (d *DB) Close() error {
-	close(d.queue)
 	return d.conn.Close()
 }

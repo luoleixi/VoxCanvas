@@ -58,7 +58,7 @@ grep "\[SESSION\]" /var/log/voxcanvas/voxcanvas-backend.log
 | `[DRAW]` | 语音理解、意图识别、精炼、生成、撤销、清空、切换会话 |
 | `[LLM]` | 文本大模型请求与响应 |
 | `[IMAGE]` | 图片生成模型请求与响应 |
-| `[DB]` | SQLite 异步写入错误与事件日志写入 |
+| `[DB]` | SQLite 事务写入与事件日志写入 |
 
 ## 排查建议
 

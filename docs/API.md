@@ -450,6 +450,21 @@ CREATE TABLE session_events (
 
 当前撤销仍通过 `sentences.previous_image_id` 和内存中的最近生成结果支持基础撤销；`session_events` 已作为后续完整版本控制的事件基础。
 
+当前数据库写入采用同步事务封装，不再使用异步写入队列。后端会先完成意图识别、需求精炼、图片生成等外部模型调用，再把相关数据库变更放入同一个 SQLite 事务中提交，避免长时间持有数据库锁。
+
+事务边界如下：
+
+| 操作 | 同一事务内写入 |
+| --- | --- |
+| 用户输入 | 写入 `sentences`，并写入 `session_events` 的 `sentence` 事件 |
+| 需求精炼 | 更新 `sessions.dev`，并写入 `requirement_refined` 事件 |
+| 图片生成成功 | 写入 `images`，写入 `image_generated` 事件，并清空 `sessions.dev` |
+| 撤销 | 恢复 `sessions.dev`，并写入 `undo` 事件 |
+| 清空 | 清空 `sessions.dev`，并写入 `clear` 事件 |
+| 切换新会话 | 创建或更新新 `sessions`，并写入 `switch_session` 事件 |
+
+如果事务内任一写入失败，本次业务状态和事件日志都会一起回滚，避免出现“状态已变更但日志缺失”或“日志存在但状态未更新”的不一致。
+
 ### 后续扩展：带参数撤销
 
 当前版本中，用户说“撤销”时，默认撤销到当前会话上一次成功生成的图片及其生成文本。后续可以把撤销扩展为带参数的语音指令，让用户通过自然语言决定撤销目标。
