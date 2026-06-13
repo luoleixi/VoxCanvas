@@ -45,35 +45,51 @@ type chatResponse struct {
 	} `json:"choices"`
 }
 
-type classifyResult struct {
-	Op      string `json:"op"`
-	Content string `json:"content"`
-}
+func (c *RealClient) Classify(sentence string) (*IntentResult, error) {
+	sysPrompt := `你是 VoxCanvas 的语音绘图指令识别器。
 
-func (c *RealClient) Classify(sentence string) (bool, string, error) {
-	sysPrompt := `你是一个语音绘图工具的指令分类器。用户通过语音输入文本，你需要判断文本是指令(order)还是需求(requirement)。
+用户只能通过语音控制绘图。你的任务是判断用户输入属于哪一种操作，并返回严格 JSON。
 
-- order: 仅当用户**纯粹**表达"生成图片"意图，且句中**不带任何具体内容名词**（如物体、颜色、场景、风格等）时，才返回 order。例如"生成图片"、"画图"、"开始画"、"创建图片"、"帮我画一张"、"画出来吧"属于 order。content 固定为"生成图片"。
-- requirement: 只要句中携带了具体绘制内容，无论是否包含"画"字，一律归为 requirement。例如"我想画一朵花"、"画只猫"、"红色的"、"蓝天白云"属于 requirement。
+可用 op：
+- requirement：用户描述、修改、补充绘图需求，例如画一只猫、加上月亮、背景换成森林、风格改成水彩、不要那只鸟。
+- generate_image：用户要求生成图片、开始绘制、出图，例如生成图片、开始画吧、出图、帮我生成、就按这个画。
+- undo：用户要求撤销上一步、回退、恢复上一步，例如撤销、撤回刚才那步、回退一步、不要刚才的修改。
+- clear：用户要求清空当前画布或当前会话内容，例如清空、清空画布、全部删掉、从头开始、重新画。
+- switch_session：用户要求切换、打开、返回某个历史会话，例如切换会话、打开上一个会话、回到刚才那个作品、切换到海边小屋那张。
+- unknown：无法识别，或用户输入与绘图控制无关。
 
-请严格只输出一行JSON，不要用markdown代码块包裹：
-{"op":"order", "content":"生成图片"}
-或
-{"op":"requirement", "content":"<原句>"}`
+返回格式固定为：
+{"op":"requirement|generate_image|undo|clear|switch_session|unknown","text":"","image":""}
+
+字段规则：
+1. op 必须是上面的枚举值之一。
+2. text 只在 op=requirement 时填写用户的绘图需求文本，可以保留原句或轻微规范化；其他 op 必须返回空字符串。
+3. image 永远返回空字符串，不能编造图片信息。
+
+判断规则：
+1. 描述画面内容、风格、颜色、构图、添加或删除元素，返回 requirement。
+2. 明确要求生成图片、出图、开始画，返回 generate_image。
+3. 撤销、回退、不要刚才那步，返回 undo。
+4. 清空、全部删除、重新开始当前作品，返回 clear。
+5. 切换、打开、回到某个历史会话，返回 switch_session。
+6. 如果一句话同时包含切换会话和其他绘图需求，以 switch_session 为主。
+7. 如果一句话同时包含绘图需求和生成图片，以 generate_image 为主，text 仍返回空字符串。
+8. 不确定时返回 unknown。
+
+请严格只输出一行 JSON，不要使用 markdown 代码块，不要解释。`
 
 	raw, err := c.chat(sysPrompt, sentence)
 	if err != nil {
-		return false, "", err
+		return nil, err
 	}
 
 	cleaned := extractJSON(raw)
-	var result classifyResult
+	var result IntentResult
 	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
-		return false, "", fmt.Errorf("parse classify response: %w, raw: %s", err, raw)
+		return nil, fmt.Errorf("parse classify response: %w, raw: %s", err, raw)
 	}
 
-	isOrder := result.Op == "order"
-	return isOrder, result.Content, nil
+	return &result, nil
 }
 
 func (c *RealClient) Refine(dev, newSentence string) (string, error) {
@@ -134,7 +150,7 @@ func (c *RealClient) chat(system, user string) (string, error) {
 	log.Printf("[LLM] response <- status=%d body=%s", resp.StatusCode, truncate(string(body), 500))
 
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("deepseek api error %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("dashscope chat api error %d: %s", resp.StatusCode, string(body))
 	}
 
 	var cr chatResponse
@@ -143,7 +159,7 @@ func (c *RealClient) chat(system, user string) (string, error) {
 	}
 
 	if len(cr.Choices) == 0 {
-		return "", errors.New("deepseek returned empty choices")
+		return "", errors.New("dashscope chat api returned empty choices")
 	}
 
 	result := strings.TrimSpace(cr.Choices[0].Message.Content)
@@ -201,7 +217,7 @@ func NewRealGenerator(endpoint, apiKey, model string) *RealGenerator {
 }
 
 type imageGenMessage struct {
-	Role    string `json:"role"`
+	Role    string            `json:"role"`
 	Content []imageGenContent `json:"content"`
 }
 

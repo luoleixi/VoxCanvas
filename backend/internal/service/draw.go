@@ -10,57 +10,224 @@ import (
 
 type DrawService struct {
 	Dev        *DevStore
+	Generated  *GeneratedStore
+	Sessions   *SessionService
 	Classifier llm.Classifier
 	Refiner    llm.Refiner
 	Generator  llm.Generator
 	DB         *db.DB
 }
 
-func (s *DrawService) Handle(sentence string) (*model.DrawData, error) {
+func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawData, error) {
+	if s.Sessions != nil {
+		if err := s.Sessions.Touch(clientID, sessionID); err != nil {
+			return nil, err
+		}
+	}
+	var previousImageID int64
+	if s.Generated != nil {
+		if result, ok := s.Generated.Get(sessionID); ok {
+			previousImageID = result.ImageID
+		}
+	}
+	beforeDev := s.Dev.Get(sessionID)
 	if s.DB != nil {
-		s.DB.InsertSentence(sentence, "user_input")
+		s.DB.InsertSentence(sessionID, previousImageID, sentence, "user_input")
+		if err := s.insertEvent(db.SessionEvent{
+			SessionID:       sessionID,
+			EventType:       "sentence",
+			PreviousImageID: previousImageID,
+			Sentence:        sentence,
+			BeforeDev:       beforeDev,
+			BeforeImageID:   previousImageID,
+		}); err != nil {
+			return nil, err
+		}
 	}
 
-	isOrder, content, err := s.Classifier.Classify(sentence)
+	intent, err := s.Classifier.Classify(sentence)
 	if err != nil {
 		return nil, err
 	}
 
-	if !isOrder {
-		refined, err := s.Dev.Append(sentence, s.Refiner)
+	switch intent.Op {
+	case "requirement":
+		refined, err := s.Dev.Append(sessionID, sentence, s.Refiner)
 		if err != nil {
 			return nil, err
 		}
+		if err := s.setSessionDev(sessionID, refined); err != nil {
+			return nil, err
+		}
+		if err := s.insertEvent(db.SessionEvent{
+			SessionID:       sessionID,
+			EventType:       "requirement_refined",
+			PreviousImageID: previousImageID,
+			Sentence:        sentence,
+			Dev:             refined,
+			BeforeDev:       beforeDev,
+			BeforeImageID:   previousImageID,
+		}); err != nil {
+			return nil, err
+		}
 		return &model.DrawData{
-			Op:      "requirement",
-			Content: refined,
+			Op:    "requirement",
+			Text:  refined,
+			Image: "",
 		}, nil
-	}
 
-	// "生成图片" triggers image generation, other orders return directly
-	if content == "生成图片" {
-		prompt := s.Dev.Get()
+	case "generate_image":
+		prompt := s.Dev.Get(sessionID)
 		base64Img, err := s.Generator.Generate(prompt)
 		if err != nil {
 			log.Printf("[DRAW] image gen skipped: %v, return prompt as content", err)
-			s.Dev.Set("")
+			s.Dev.Set(sessionID, "")
+			if err := s.setSessionDev(sessionID, ""); err != nil {
+				return nil, err
+			}
 			return &model.DrawData{
-				Op:      "order",
-				Content: prompt,
+				Op:    "generate_image",
+				Text:  "",
+				Image: "",
 			}, nil
 		}
+		var imageID int64
 		if s.DB != nil {
-			s.DB.InsertImage(prompt, base64Img)
+			imageID, err = s.DB.InsertImage(sessionID, prompt, base64Img)
+			if err != nil {
+				return nil, err
+			}
 		}
-		s.Dev.Set("")
+		if s.Generated != nil {
+			s.Generated.Set(sessionID, GeneratedResult{
+				ImageID: imageID,
+				Text:    prompt,
+				Image:   base64Img,
+			})
+		}
+		if err := s.insertEvent(db.SessionEvent{
+			SessionID:       sessionID,
+			EventType:       "image_generated",
+			ImageID:         imageID,
+			PreviousImageID: previousImageID,
+			Sentence:        sentence,
+			Dev:             prompt,
+			BeforeDev:       beforeDev,
+			BeforeImageID:   previousImageID,
+		}); err != nil {
+			return nil, err
+		}
+		s.Dev.Set(sessionID, "")
+		if err := s.setSessionDev(sessionID, ""); err != nil {
+			return nil, err
+		}
 		return &model.DrawData{
-			Op:      "order",
-			Content: base64Img,
+			Op:    "generate_image",
+			Text:  "",
+			Image: base64Img,
+		}, nil
+
+	case "switch_session":
+		newSessionID := NewSessionID()
+		if s.Sessions != nil {
+			if err := s.Sessions.Create(clientID, newSessionID); err != nil {
+				return nil, err
+			}
+		}
+		if err := s.insertEvent(db.SessionEvent{
+			SessionID:       sessionID,
+			EventType:       "switch_session",
+			PreviousImageID: previousImageID,
+			Sentence:        sentence,
+			Dev:             beforeDev,
+			BeforeDev:       beforeDev,
+			BeforeImageID:   previousImageID,
+		}); err != nil {
+			return nil, err
+		}
+		return &model.DrawData{
+			Op:        "switch_session",
+			Text:      "",
+			Image:     "",
+			SessionID: newSessionID,
+		}, nil
+
+	case "undo":
+		if s.Generated == nil {
+			return &model.DrawData{Op: "undo", Text: "", Image: ""}, nil
+		}
+		result, ok := s.Generated.Get(sessionID)
+		if !ok {
+			return &model.DrawData{Op: "undo", Text: "", Image: ""}, nil
+		}
+		s.Dev.Set(sessionID, result.Text)
+		if err := s.setSessionDev(sessionID, result.Text); err != nil {
+			return nil, err
+		}
+		if err := s.insertEvent(db.SessionEvent{
+			SessionID:       sessionID,
+			EventType:       "undo",
+			ImageID:         result.ImageID,
+			PreviousImageID: previousImageID,
+			Sentence:        sentence,
+			Dev:             result.Text,
+			BeforeDev:       beforeDev,
+			BeforeImageID:   previousImageID,
+		}); err != nil {
+			return nil, err
+		}
+		return &model.DrawData{
+			Op:    "undo",
+			Text:  result.Text,
+			Image: result.Image,
+		}, nil
+
+	case "clear", "unknown":
+		if intent.Op == "clear" {
+			s.Dev.Set(sessionID, "")
+			if err := s.setSessionDev(sessionID, ""); err != nil {
+				return nil, err
+			}
+			if s.Generated != nil {
+				s.Generated.Clear(sessionID)
+			}
+			if err := s.insertEvent(db.SessionEvent{
+				SessionID:       sessionID,
+				EventType:       "clear",
+				PreviousImageID: previousImageID,
+				Sentence:        sentence,
+				Dev:             "",
+				BeforeDev:       beforeDev,
+				BeforeImageID:   previousImageID,
+			}); err != nil {
+				return nil, err
+			}
+		}
+		return &model.DrawData{
+			Op:    intent.Op,
+			Text:  "",
+			Image: "",
+		}, nil
+
+	default:
+		return &model.DrawData{
+			Op:    "unknown",
+			Text:  "",
+			Image: "",
 		}, nil
 	}
+}
 
-	return &model.DrawData{
-		Op:      "order",
-		Content: content,
-	}, nil
+func (s *DrawService) setSessionDev(sessionID, dev string) error {
+	if s.Sessions == nil {
+		return nil
+	}
+	return s.Sessions.SetDev(sessionID, dev)
+}
+
+func (s *DrawService) insertEvent(event db.SessionEvent) error {
+	if s.DB == nil {
+		return nil
+	}
+	return s.DB.InsertSessionEvent(event)
 }

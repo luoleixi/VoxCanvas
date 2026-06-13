@@ -7,34 +7,38 @@ import (
 )
 
 type DevStore struct {
-	mu  sync.RWMutex
-	dev string
+	mu   sync.RWMutex
+	data map[string]string
 }
 
 func NewDevStore() *DevStore {
-	return &DevStore{}
+	return &DevStore{data: make(map[string]string)}
 }
 
-func (d *DevStore) Get() string {
+func (d *DevStore) Get(sessionID string) string {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	return d.dev
+	return d.data[sessionID]
 }
 
-func (d *DevStore) Set(s string) {
+func (d *DevStore) Set(sessionID, value string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.dev = s
+	if value == "" {
+		delete(d.data, sessionID)
+		return
+	}
+	d.data[sessionID] = value
 }
 
-func (d *DevStore) Append(newSentence string, refiner llm.Refiner) (string, error) {
+func (d *DevStore) Append(sessionID, newSentence string, refiner llm.Refiner) (string, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	refined, err := refiner.Refine(d.dev, newSentence)
+	refined, err := refiner.Refine(d.data[sessionID], newSentence)
 	if err != nil {
 		return "", err
 	}
-	d.dev = refined
+	d.data[sessionID] = refined
 	return refined, nil
 }

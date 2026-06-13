@@ -1,14 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Mic, RadioTower, Sparkles, Loader2 } from 'lucide-react';
+import { Loader2, Mic, RadioTower, Sparkles } from 'lucide-react';
 import './styles.css';
 
+const SESSION_ENDPOINT = import.meta.env.VITE_SESSION_ENDPOINT || '/api/v1/session/start';
 const VOICE_ENDPOINT = import.meta.env.VITE_VOICE_ENDPOINT || '/api/v1/draw/understand';
 const RESTART_DELAY_MS = 350;
 
 function normalizeImageSource(content) {
   if (!content) return '';
   if (content.startsWith('data:')) return content;
+  if (content.startsWith('base64:')) return normalizeImageSource(content.slice('base64:'.length));
   if (content.startsWith('/9j/')) return `data:image/jpeg;base64,${content}`;
   if (content.startsWith('R0lGOD')) return `data:image/gif;base64,${content}`;
   if (content.startsWith('UklGR')) return `data:image/webp;base64,${content}`;
@@ -21,17 +23,56 @@ function App() {
   const [liveTranscript, setLiveTranscript] = useState('');
   const [promptText, setPromptText] = useState('');
   const [imageSrc, setImageSrc] = useState('');
-  const [statusText, setStatusText] = useState('正在准备语音识别...');
+  const [sessionReady, setSessionReady] = useState(false);
+  const [statusText, setStatusText] = useState('正在初始化会话...');
   const shouldRestartRef = useRef(true);
   const restartTimerRef = useRef(null);
 
-  // 增加波纹条数量，让动画更细腻
   const waveformBars = useMemo(
     () => Array.from({ length: 24 }, (_, index) => ({ id: index, delay: `${index * 0.05}s` })),
     [],
   );
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function startSession() {
+      try {
+        const response = await fetch(SESSION_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({}),
+        });
+
+        const payload = await response.json();
+        if (!response.ok || payload.code !== 200) {
+          throw new Error(payload.msg || `请求失败：${response.status}`);
+        }
+
+        if (!cancelled) {
+          setSessionReady(true);
+          setStatusText('正在准备语音识别...');
+        }
+      } catch (error) {
+        console.error('初始化会话失败:', error);
+        if (!cancelled) {
+          setSessionReady(false);
+          setStatusText('会话初始化失败，请检查后端服务。');
+        }
+      }
+    }
+
+    startSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sessionReady) return undefined;
+
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
@@ -123,23 +164,46 @@ function App() {
       recognition.onend = null;
       recognition.abort();
     };
-  }, []);
+  }, [sessionReady]);
+
+  function applyDrawData(data) {
+    switch (data?.op) {
+      case 'requirement':
+        setPromptText(data.text || '');
+        break;
+      case 'generate_image':
+      case 'undo':
+        setPromptText(data.text || '');
+        setImageSrc(normalizeImageSource(data.image || ''));
+        break;
+      case 'clear':
+      case 'switch_session':
+        setPromptText('');
+        setImageSrc('');
+        break;
+      case 'unknown':
+        break;
+      default:
+        console.warn('未知绘图响应:', data);
+    }
+  }
 
   async function handleFinalSentence(sentence) {
-    setStatusText('正在解析语义并生成图象...');
+    setStatusText('正在解析语义...');
     try {
       const response = await fetch(VOICE_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ sentences: sentence }),
       });
 
       const payload = await response.json();
-      if (!response.ok || payload.code !== 200) throw new Error(payload.msg || `请求失败：${response.status}`);
+      if (!response.ok || payload.code !== 200) {
+        throw new Error(payload.msg || `请求失败：${response.status}`);
+      }
 
-      if (payload.data?.op === 'requirement') setPromptText(payload.data.content || '');
-      if (payload.data?.op === 'order') setImageSrc(normalizeImageSource(payload.data.content));
-
+      applyDrawData(payload.data);
       setStatusText('正在倾听...');
     } catch (error) {
       console.error('发送语音片段失败:', error);
@@ -149,7 +213,6 @@ function App() {
 
   return (
     <main className="voice-canvas">
-      {/* 背景光晕效果 */}
       <div className="bg-glow blob-1" aria-hidden="true" />
       <div className="bg-glow blob-2" aria-hidden="true" />
 
@@ -173,7 +236,13 @@ function App() {
           </div>
 
           <div className="transcript-box">
-            {speechSupported ? liveTranscript || <span className="placeholder-text">等待指令，您可以说：“画一只赛博朋克风格的猫...”</span> : '浏览器暂不支持实时语音识别'}
+            {speechSupported ? (
+              liveTranscript || (
+                <span className="placeholder-text">等待指令，例如：“画一只月光下散步的猫。”</span>
+              )
+            ) : (
+              '浏览器暂不支持实时语音识别'
+            )}
           </div>
         </section>
 
@@ -195,7 +264,7 @@ function App() {
           <div className="thinking-state">
             <Loader2 size={48} className="spinner text-primary" strokeWidth={1.5} />
             <div className="gradient-text">等待灵感降临</div>
-            <p className="thinking-subtext">通过语音描述您想要创作的画面</p>
+            <p className="thinking-subtext">通过语音描述你想要创作的画面</p>
           </div>
         )}
       </section>

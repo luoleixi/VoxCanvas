@@ -1,7 +1,13 @@
 package llm
 
+type IntentResult struct {
+	Op    string `json:"op"`
+	Text  string `json:"text"`
+	Image string `json:"image"`
+}
+
 type Classifier interface {
-	Classify(sentence string) (isOrder bool, content string, err error)
+	Classify(sentence string) (*IntentResult, error)
 }
 
 type Refiner interface {
