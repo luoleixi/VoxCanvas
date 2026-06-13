@@ -57,6 +57,19 @@ func Open(dataDir string) (*DB, error) {
 			base64_data TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
+		CREATE TABLE IF NOT EXISTS session_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			sentence_id INTEGER,
+			image_id INTEGER,
+			previous_image_id INTEGER,
+			sentence TEXT,
+			dev TEXT,
+			before_dev TEXT,
+			before_image_id INTEGER,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
 	`); err != nil {
 		return nil, err
 	}
@@ -72,10 +85,33 @@ func Open(dataDir string) (*DB, error) {
 	if err := ensureColumn(conn, "images", "session_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return nil, err
 	}
+	if err := ensureColumn(conn, "session_events", "sentence_id", "INTEGER"); err != nil {
+		return nil, err
+	}
+	if err := ensureColumn(conn, "session_events", "image_id", "INTEGER"); err != nil {
+		return nil, err
+	}
+	if err := ensureColumn(conn, "session_events", "previous_image_id", "INTEGER"); err != nil {
+		return nil, err
+	}
+	if err := ensureColumn(conn, "session_events", "sentence", "TEXT"); err != nil {
+		return nil, err
+	}
+	if err := ensureColumn(conn, "session_events", "dev", "TEXT"); err != nil {
+		return nil, err
+	}
+	if err := ensureColumn(conn, "session_events", "before_dev", "TEXT"); err != nil {
+		return nil, err
+	}
+	if err := ensureColumn(conn, "session_events", "before_image_id", "INTEGER"); err != nil {
+		return nil, err
+	}
 	if _, err := conn.Exec(`
 		CREATE INDEX IF NOT EXISTS idx_sessions_client_id ON sessions(client_id);
 		CREATE INDEX IF NOT EXISTS idx_sentences_session_id ON sentences(session_id);
 		CREATE INDEX IF NOT EXISTS idx_images_session_id ON images(session_id);
+		CREATE INDEX IF NOT EXISTS idx_session_events_session_id ON session_events(session_id);
+		CREATE INDEX IF NOT EXISTS idx_session_events_type ON session_events(event_type);
 	`); err != nil {
 		return nil, err
 	}
@@ -160,6 +196,46 @@ func (d *DB) InsertImage(sessionID, prompt, base64Data string) (int64, error) {
 		return 0, err
 	}
 	return result.LastInsertId()
+}
+
+type SessionEvent struct {
+	SessionID       string
+	EventType       string
+	SentenceID      int64
+	ImageID         int64
+	PreviousImageID int64
+	Sentence        string
+	Dev             string
+	BeforeDev       string
+	BeforeImageID   int64
+}
+
+func (d *DB) InsertSessionEvent(event SessionEvent) error {
+	_, err := d.conn.Exec(`
+		INSERT INTO session_events (
+			session_id,
+			event_type,
+			sentence_id,
+			image_id,
+			previous_image_id,
+			sentence,
+			dev,
+			before_dev,
+			before_image_id
+		)
+		VALUES (?, ?, NULLIF(?, 0), NULLIF(?, 0), NULLIF(?, 0), ?, ?, ?, NULLIF(?, 0))
+	`,
+		event.SessionID,
+		event.EventType,
+		event.SentenceID,
+		event.ImageID,
+		event.PreviousImageID,
+		event.Sentence,
+		event.Dev,
+		event.BeforeDev,
+		event.BeforeImageID,
+	)
+	return err
 }
 
 func (d *DB) Close() error {

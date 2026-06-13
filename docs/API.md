@@ -403,19 +403,22 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
 
 `previous_image_id` 用于把每句话和“说出这句话之前的上一张生成图”关联起来，方便后续实现更精细的撤销、历史查看和回放。
 
-### 后续扩展：session_events 日志表
+### 当前数据记录：session_events 日志表
 
-后续如果需要完整操作回放、多步撤销、恢复历史会话，建议新增事件日志表：
+后端已建立 `session_events` 事件日志表，用于记录当前会话内的关键操作。当前版本先写入基础事件，后续多步撤销、清空恢复、历史回放、图生图来源追踪都应基于该表继续实现。
 
 ```sql
 CREATE TABLE session_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
-    sentence TEXT,
+    sentence_id INTEGER,
     image_id INTEGER,
     previous_image_id INTEGER,
+    sentence TEXT,
     dev TEXT,
+    before_dev TEXT,
+    before_image_id INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 ```
@@ -431,7 +434,21 @@ CREATE TABLE session_events (
 | `clear` | 清空当前会话 |
 | `switch_session` | 切换到新会话 |
 
-该表作为未来设计，当前版本先通过 `sentences.previous_image_id` 和内存中的最近生成结果支持基础撤销。
+字段说明：
+
+| 字段 | 说明 |
+| --- | --- |
+| `session_id` | 事件所属会话 |
+| `event_type` | 事件类型 |
+| `sentence_id` | 预留字段，后续可关联 `sentences.id` |
+| `image_id` | 本次事件产生或恢复的图片 ID |
+| `previous_image_id` | 事件发生前的上一张生成图 ID |
+| `sentence` | 触发事件的用户原始语音文本 |
+| `dev` | 事件完成后的会话文本状态 |
+| `before_dev` | 事件发生前的会话文本状态 |
+| `before_image_id` | 事件发生前的上一张生成图 ID |
+
+当前撤销仍通过 `sentences.previous_image_id` 和内存中的最近生成结果支持基础撤销；`session_events` 已作为后续完整版本控制的事件基础。
 
 ### 后续扩展：带参数撤销
 

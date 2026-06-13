@@ -30,8 +30,19 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 			previousImageID = result.ImageID
 		}
 	}
+	beforeDev := s.Dev.Get(sessionID)
 	if s.DB != nil {
 		s.DB.InsertSentence(sessionID, previousImageID, sentence, "user_input")
+		if err := s.insertEvent(db.SessionEvent{
+			SessionID:       sessionID,
+			EventType:       "sentence",
+			PreviousImageID: previousImageID,
+			Sentence:        sentence,
+			BeforeDev:       beforeDev,
+			BeforeImageID:   previousImageID,
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	intent, err := s.Classifier.Classify(sentence)
@@ -46,6 +57,17 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 			return nil, err
 		}
 		if err := s.setSessionDev(sessionID, refined); err != nil {
+			return nil, err
+		}
+		if err := s.insertEvent(db.SessionEvent{
+			SessionID:       sessionID,
+			EventType:       "requirement_refined",
+			PreviousImageID: previousImageID,
+			Sentence:        sentence,
+			Dev:             refined,
+			BeforeDev:       beforeDev,
+			BeforeImageID:   previousImageID,
+		}); err != nil {
 			return nil, err
 		}
 		return &model.DrawData{
@@ -83,6 +105,18 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 				Image:   base64Img,
 			})
 		}
+		if err := s.insertEvent(db.SessionEvent{
+			SessionID:       sessionID,
+			EventType:       "image_generated",
+			ImageID:         imageID,
+			PreviousImageID: previousImageID,
+			Sentence:        sentence,
+			Dev:             prompt,
+			BeforeDev:       beforeDev,
+			BeforeImageID:   previousImageID,
+		}); err != nil {
+			return nil, err
+		}
 		s.Dev.Set(sessionID, "")
 		if err := s.setSessionDev(sessionID, ""); err != nil {
 			return nil, err
@@ -99,6 +133,17 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 			if err := s.Sessions.Create(clientID, newSessionID); err != nil {
 				return nil, err
 			}
+		}
+		if err := s.insertEvent(db.SessionEvent{
+			SessionID:       sessionID,
+			EventType:       "switch_session",
+			PreviousImageID: previousImageID,
+			Sentence:        sentence,
+			Dev:             beforeDev,
+			BeforeDev:       beforeDev,
+			BeforeImageID:   previousImageID,
+		}); err != nil {
+			return nil, err
 		}
 		return &model.DrawData{
 			Op:        "switch_session",
@@ -119,6 +164,18 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 		if err := s.setSessionDev(sessionID, result.Text); err != nil {
 			return nil, err
 		}
+		if err := s.insertEvent(db.SessionEvent{
+			SessionID:       sessionID,
+			EventType:       "undo",
+			ImageID:         result.ImageID,
+			PreviousImageID: previousImageID,
+			Sentence:        sentence,
+			Dev:             result.Text,
+			BeforeDev:       beforeDev,
+			BeforeImageID:   previousImageID,
+		}); err != nil {
+			return nil, err
+		}
 		return &model.DrawData{
 			Op:    "undo",
 			Text:  result.Text,
@@ -133,6 +190,17 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 			}
 			if s.Generated != nil {
 				s.Generated.Clear(sessionID)
+			}
+			if err := s.insertEvent(db.SessionEvent{
+				SessionID:       sessionID,
+				EventType:       "clear",
+				PreviousImageID: previousImageID,
+				Sentence:        sentence,
+				Dev:             "",
+				BeforeDev:       beforeDev,
+				BeforeImageID:   previousImageID,
+			}); err != nil {
+				return nil, err
 			}
 		}
 		return &model.DrawData{
@@ -155,4 +223,11 @@ func (s *DrawService) setSessionDev(sessionID, dev string) error {
 		return nil
 	}
 	return s.Sessions.SetDev(sessionID, dev)
+}
+
+func (s *DrawService) insertEvent(event db.SessionEvent) error {
+	if s.DB == nil {
+		return nil
+	}
+	return s.DB.InsertSessionEvent(event)
 }
