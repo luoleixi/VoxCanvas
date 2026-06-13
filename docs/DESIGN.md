@@ -127,7 +127,7 @@
 | 需求精炼 | 更新 `sessions.dev/title/summary`，写入 `session_events(requirement_refined)` |
 | 图片生成成功 | 写入 `images`，更新 `current_image_id/undo_image_id`，写入 `session_events(image_generated)`，清空 `sessions.dev` |
 | 撤销 | 查询 `undo_image_id` 对应图片，恢复 `sessions.dev/title/summary`，更新 `current_image_id/undo_image_id`，写入 `session_events(undo)` |
-| 清空 | 清空 `sessions.dev/title/summary/current_image_id/undo_image_id`，写入 `session_events(clear)` |
+| 清空 | 清空 `sessions.dev/title/summary/current_image_id`，将 `undo_image_id` 指向清空前图片，写入 `session_events(clear)` |
 | 切换新会话 | 创建或更新新 `sessions`，写入 `session_events(switch_session)` |
 
 如果事务内任一写入失败，本次业务状态和事件日志都会一起回滚，避免出现状态与日志不一致。
@@ -162,13 +162,21 @@
 当前清空会话会：
 
 - 清空内存中的当前精炼文本
-- 清空当前会话最近生成结果缓存
 - 清空 `sessions.dev`
 - 清空 `sessions.title` 和 `sessions.summary`
-- 清空 `sessions.current_image_id` 和 `sessions.undo_image_id`
+- 清空 `sessions.current_image_id`
+- 将 `sessions.undo_image_id` 指向清空前的当前图片
 - 写入 `session_events(clear)`
 
-后续如果要支持“清空后撤销回清空前”，建议把清空视为一个版本事件，而不是删除历史数据。当前历史图片仍保存在 `images` 中，后续可基于 `session_events` 恢复清空前状态。
+清空不会删除 `images` 历史数据。这样用户清空后再次说“撤销”，后端可以根据 `undo_image_id` 找回清空前的图片和 prompt，并恢复：
+
+- 返回清空前图片的 `base64_data`
+- 返回清空前图片的 `prompt`
+- 将该 `prompt` 写回 `sessions.dev`
+- 将 `sessions.current_image_id` 恢复为该图片 ID
+- 将 `sessions.undo_image_id` 前移到更早一张图片
+
+无数据库模式下，内存 `GeneratedStore` 会保留历史生成结果。清空只会把当前显示游标置空，不删除历史栈，因此后续撤销仍能恢复清空前结果。
 
 ## 切回历史会话
 

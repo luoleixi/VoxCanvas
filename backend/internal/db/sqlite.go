@@ -337,7 +337,7 @@ func (d *DB) RecordClear(sessionID string, event SessionEvent) error {
 		if err := updateSessionCurrentImageTx(tx, sessionID, 0); err != nil {
 			return err
 		}
-		if err := updateSessionUndoImageTx(tx, sessionID, 0); err != nil {
+		if err := updateSessionUndoImageTx(tx, sessionID, event.PreviousImageID); err != nil {
 			return err
 		}
 		return insertSessionEventTx(tx, event)
