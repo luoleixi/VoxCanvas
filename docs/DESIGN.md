@@ -29,7 +29,7 @@
 
 ## 会话标题与摘要
 
-`sessions` 表保存 `title` 和 `summary`，用于历史会话候选展示和后续语音匹配。
+`sessions` 表保存 `title` 和 `summary`，用于历史会话候选展示和后续语音匹配。它们是稳定的会话识别信息，一经自动确定便不再被后续操作自动覆盖。
 
 当前实现不额外调用大模型生成标题，而是从精炼后的绘图文本中截取：
 
@@ -38,12 +38,16 @@
 | `title` | 精炼文本截断后的短标题 |
 | `summary` | 精炼文本截断后的摘要 |
 
-更新时机：
+自动写入规则：
 
-- 需求精炼完成后更新
-- 图片生成成功后更新
-- 撤销恢复到某张图后更新
-- 清空当前会话时清空
+- 新会话创建时为空
+- 第一次需求精炼完成后，如果 `title/summary` 为空，则写入
+- 第一次生成图片成功后，如果 `title/summary` 仍为空，则写入
+- 后续需求精炼不覆盖
+- 后续图片生成不覆盖
+- 撤销不覆盖
+- 清空不清空
+- 未来如果需要改名，应通过用户主动重命名能力覆盖
 
 ## 数据表
 
@@ -140,10 +144,10 @@
 | 操作 | 同一事务内写入 |
 | --- | --- |
 | 用户输入 | 写入 `sentences`，写入 `session_events(sentence)` |
-| 需求精炼 | 更新 `sessions.dev/title/summary`，写入 `session_events(requirement_refined)` |
-| 图片生成成功 | 写入 `images`，创建 `session_versions(image_generated)` 节点，更新当前版本和撤销目标，写入 `session_events(image_generated)`，清空 `sessions.dev` |
-| 撤销 | 查询 `undo_version_id` 对应版本，恢复 `sessions.dev/title/summary/current_image_id/current_version_id`，前移撤销目标，写入 `session_events(undo)` |
-| 清空 | 创建 `session_versions(clear)` 节点，清空 `sessions.dev/title/summary/current_image_id`，将撤销目标指向清空前版本，写入 `session_events(clear)` |
+| 需求精炼 | 更新 `sessions.dev`，仅当 `title/summary` 为空时写入会话标题摘要，写入 `session_events(requirement_refined)` |
+| 图片生成成功 | 写入 `images`，创建 `session_versions(image_generated)` 节点，仅当 `title/summary` 为空时写入会话标题摘要，更新当前版本和撤销目标，写入 `session_events(image_generated)`，清空 `sessions.dev` |
+| 撤销 | 查询 `undo_version_id` 对应版本，恢复 `sessions.dev/current_image_id/current_version_id`，前移撤销目标，写入 `session_events(undo)` |
+| 清空 | 创建 `session_versions(clear)` 节点，清空 `sessions.dev/current_image_id`，将撤销目标指向清空前版本，写入 `session_events(clear)` |
 | 切换新会话 | 创建或更新新 `sessions`，写入 `session_events(switch_session)` |
 
 如果事务内任一写入失败，本次业务状态和事件日志都会一起回滚，避免出现状态与日志不一致。
@@ -179,7 +183,6 @@
 
 - 清空内存中的当前精炼文本
 - 清空 `sessions.dev`
-- 清空 `sessions.title` 和 `sessions.summary`
 - 清空 `sessions.current_image_id`
 - 创建 `session_versions(clear)` 节点，父节点指向清空前的当前版本
 - 将 `sessions.current_version_id` 指向清空版本
