@@ -11,63 +11,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22.x'
-          cache: false
-
-      - name: Test backend
-        working-directory: backend
-        run: go test ./...
-
-      - name: Build backend
-        working-directory: backend
-        run: |
-          mkdir -p ../release/backend
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../release/backend/voxcanvas-backend .
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Build frontend
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
-          mkdir -p ../release/frontend
-          cp -R dist/. ../release/frontend/
-
-      - name: Add deployment files
-        run: |
-          mkdir -p release/deploy
-          cp deploy/nginx/voxcanvas.conf release/deploy/voxcanvas.conf
-          cp deploy/systemd/voxcanvas-backend.service release/deploy/voxcanvas-backend.service
-
-      - name: Upload release to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          password: ${{ secrets.SERVER_PASSWORD }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
-          source: release/*
-          target: /tmp/voxcanvas-release
-          rm: true
-          strip_components: 1
-
-      - name: Deploy on server
+      - name: Build and deploy on server
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -78,20 +26,84 @@ jobs:
           script: |
             set -euo pipefail
 
-            if ! command -v nginx >/dev/null 2>&1; then
+            REPO_URL="https://github.com/${{ github.repository }}.git"
+            REPO_DIR="/opt/voxcanvas/repo"
+            BUILD_DIR="/tmp/voxcanvas-build"
+            DEPLOY_SHA="${{ github.sha }}"
+            DEPLOY_REF="${{ github.ref_name }}"
+            GO_VERSION="1.22.12"
+            export GOCACHE="/opt/voxcanvas/.cache/go-build"
+            export GOMODCACHE="/opt/voxcanvas/.cache/go-mod"
+            export npm_config_cache="/opt/voxcanvas/.cache/npm"
+
+            missing_packages=""
+            for package in ca-certificates curl git nginx; do
+              if ! dpkg -s "$package" >/dev/null 2>&1; then
+                missing_packages="$missing_packages $package"
+              fi
+            done
+            if [ -n "$missing_packages" ]; then
               apt-get update
-              DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
+              DEBIAN_FRONTEND=noninteractive apt-get install -y $missing_packages
             fi
+
+            if ! command -v go >/dev/null 2>&1 || ! go version | grep -q "go1.22"; then
+              curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz \
+                || curl -fsSL "https://golang.google.cn/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
+              rm -rf /usr/local/go
+              tar -C /usr/local -xzf /tmp/go.tar.gz
+              ln -sfn /usr/local/go/bin/go /usr/local/bin/go
+              ln -sfn /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+            fi
+
+            if ! command -v node >/dev/null 2>&1 || ! node --version | grep -q '^v20\.'; then
+              curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+              DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
+            fi
+
+            if [ ! -d "$REPO_DIR/.git" ]; then
+              rm -rf "$REPO_DIR"
+              git clone --depth 1 --branch "$DEPLOY_REF" "$REPO_URL" "$REPO_DIR"
+            fi
+
+            cd "$REPO_DIR"
+            git remote set-url origin "$REPO_URL"
+            git fetch --depth 1 origin "$DEPLOY_REF"
+            git checkout --force "$DEPLOY_SHA"
+            git clean -fd
+
+            rm -rf "$BUILD_DIR"
+            install -d -m 755 "$BUILD_DIR/backend" "$BUILD_DIR/frontend"
+            install -d -m 755 "$GOCACHE" "$GOMODCACHE" "$npm_config_cache"
+
+            cd "$REPO_DIR/backend"
+            go test ./...
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$BUILD_DIR/backend/voxcanvas-backend" .
+
+            cd "$REPO_DIR/frontend"
+            npm ci --prefer-offline --no-audit --no-fund
+            npm run build
+            cp -R dist/. "$BUILD_DIR/frontend/"
+
+            test -f /root/card/certificate.crt
+            test -f /root/card/ca_bundle.crt
+            test -f /root/card/private.key
+            cat /root/card/certificate.crt /root/card/ca_bundle.crt > /root/card/fullchain.crt
+            chmod 600 /root/card/private.key
+            chmod 644 /root/card/fullchain.crt
 
             install -d -m 755 /opt/voxcanvas/backend
             install -d -m 755 /var/www/voxcanvas
+            install -d -m 700 /etc/voxcanvas
+            touch /etc/voxcanvas/backend.env
+            chmod 600 /etc/voxcanvas/backend.env
 
-            install -m 755 /tmp/voxcanvas-release/backend/voxcanvas-backend /opt/voxcanvas/backend/voxcanvas-backend
+            install -m 755 "$BUILD_DIR/backend/voxcanvas-backend" /opt/voxcanvas/backend/voxcanvas-backend
             rm -rf /var/www/voxcanvas/*
-            cp -R /tmp/voxcanvas-release/frontend/. /var/www/voxcanvas/
+            cp -R "$BUILD_DIR/frontend/." /var/www/voxcanvas/
 
-            install -m 644 /tmp/voxcanvas-release/deploy/voxcanvas-backend.service /etc/systemd/system/voxcanvas-backend.service
-            install -m 644 /tmp/voxcanvas-release/deploy/voxcanvas.conf /etc/nginx/sites-available/voxcanvas
+            install -m 644 "$REPO_DIR/deploy/systemd/voxcanvas-backend.service" /etc/systemd/system/voxcanvas-backend.service
+            install -m 644 "$REPO_DIR/deploy/nginx/voxcanvas.conf" /etc/nginx/sites-available/voxcanvas
             ln -sfn /etc/nginx/sites-available/voxcanvas /etc/nginx/sites-enabled/voxcanvas
             rm -f /etc/nginx/sites-enabled/default
 
@@ -102,5 +114,5 @@ jobs:
             systemctl enable nginx
             systemctl restart nginx
 
-            curl -fsS http://127.0.0.1:6060/healthz
-            curl -fsS http://127.0.0.1/healthz
+            curl -fsS http://127.0.0.1:6060/health
+            curl -fsS https://127.0.0.1/health --insecure

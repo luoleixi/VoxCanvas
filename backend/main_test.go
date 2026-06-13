@@ -116,8 +116,12 @@ func TestDrawUnderstandHandler(t *testing.T) {
 		t.Fatal("expected non-empty op")
 	}
 
-	if data["content"] == "" {
-		t.Fatal("expected non-empty content")
+	if data["text"] == "" {
+		t.Fatal("expected non-empty text")
+	}
+
+	if data["image"] != "" {
+		t.Fatalf("expected empty image for requirement, got %v", data["image"])
 	}
 }
 

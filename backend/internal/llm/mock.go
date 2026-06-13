@@ -10,14 +10,30 @@ const placeholderPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4
 
 type MockClassifier struct{}
 
-func (m *MockClassifier) Classify(sentence string) (bool, string, error) {
-	kw := []string{"生成", "画", "图片", "绘图", "绘制"}
-	for _, k := range kw {
-		if strings.Contains(sentence, k) {
-			return true, sentence, nil
+func (m *MockClassifier) Classify(sentence string) (*IntentResult, error) {
+	switch {
+	case containsAny(sentence, "撤销", "撤回", "回退", "恢复上一步", "不要刚才"):
+		return &IntentResult{Op: "undo", Text: "", Image: ""}, nil
+	case containsAny(sentence, "清空", "全部删掉", "全部删除", "从头开始", "重新画"):
+		return &IntentResult{Op: "clear", Text: "", Image: ""}, nil
+	case containsAny(sentence, "切换", "打开上一个", "回到", "历史会话", "历史记录"):
+		return &IntentResult{Op: "switch_session", Text: "", Image: ""}, nil
+	case containsAny(sentence, "生成图片", "生成图", "出图", "开始画", "帮我生成", "就按这个画"):
+		return &IntentResult{Op: "generate_image", Text: "", Image: ""}, nil
+	case strings.TrimSpace(sentence) == "":
+		return &IntentResult{Op: "unknown", Text: "", Image: ""}, nil
+	default:
+		return &IntentResult{Op: "requirement", Text: sentence, Image: ""}, nil
+	}
+}
+
+func containsAny(s string, keywords ...string) bool {
+	for _, keyword := range keywords {
+		if strings.Contains(s, keyword) {
+			return true
 		}
 	}
-	return false, sentence, nil
+	return false
 }
 
 type MockRefiner struct {
@@ -41,5 +57,5 @@ func (m *MockGenerator) Generate(prompt string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "base64:" + base64.StdEncoding.EncodeToString(b), nil
+	return base64.StdEncoding.EncodeToString(b), nil
 }
