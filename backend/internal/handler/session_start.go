@@ -1,18 +1,33 @@
 package handler
 
 import (
-	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"voxcanvas/backend/internal/model"
+	"voxcanvas/backend/internal/service"
 )
 
-func SessionStart(c *gin.Context) {
-	now := time.Now()
-	sessionID := fmt.Sprintf("sess_%s_%s%03d", now.Format("20060102"), now.Format("150405"), now.UnixMilli()%1000)
+type SessionHandler struct {
+	Sessions *service.SessionService
+}
+
+func (h *SessionHandler) Start(c *gin.Context) {
+	clientID := ensureClientID(c)
+	sessionID := newSessionID()
+	if h.Sessions != nil {
+		if err := h.Sessions.Create(clientID, sessionID); err != nil {
+			c.JSON(http.StatusInternalServerError, model.Response{
+				Code: 500,
+				Msg:  err.Error(),
+				Data: nil,
+			})
+			return
+		}
+	}
+	setSessionID(c, sessionID)
+
 	c.JSON(http.StatusOK, model.Response{
 		Code: 200,
 		Msg:  "success",

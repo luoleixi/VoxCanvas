@@ -15,8 +15,8 @@ type DB struct {
 }
 
 type writeJob struct {
-	query  string
-	args   []interface{}
+	query string
+	args  []interface{}
 }
 
 func Open(dataDir string) (*DB, error) {
@@ -35,19 +35,36 @@ func Open(dataDir string) (*DB, error) {
 	}
 
 	if _, err := conn.Exec(`
+		CREATE TABLE IF NOT EXISTS sessions (
+			id TEXT PRIMARY KEY,
+			client_id TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
 		CREATE TABLE IF NOT EXISTS sentences (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL DEFAULT '',
 			content TEXT NOT NULL,
 			type TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS images (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL DEFAULT '',
 			prompt TEXT NOT NULL,
 			base64_data TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
+		CREATE INDEX IF NOT EXISTS idx_sessions_client_id ON sessions(client_id);
+		CREATE INDEX IF NOT EXISTS idx_sentences_session_id ON sentences(session_id);
+		CREATE INDEX IF NOT EXISTS idx_images_session_id ON images(session_id);
 	`); err != nil {
+		return nil, err
+	}
+	if err := ensureColumn(conn, "sentences", "session_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return nil, err
+	}
+	if err := ensureColumn(conn, "images", "session_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return nil, err
 	}
 
@@ -59,6 +76,37 @@ func Open(dataDir string) (*DB, error) {
 	return d, nil
 }
 
+func ensureColumn(conn *sql.DB, table, column, definition string) error {
+	rows, err := conn.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			typ        string
+			notNull    int
+			defaultVal interface{}
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultVal, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	_, err = conn.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition)
+	return err
+}
+
 func (d *DB) worker() {
 	for job := range d.queue {
 		if _, err := d.conn.Exec(job.query, job.args...); err != nil {
@@ -67,17 +115,28 @@ func (d *DB) worker() {
 	}
 }
 
-func (d *DB) InsertSentence(content, typ string) {
+func (d *DB) UpsertSession(clientID, sessionID string) error {
+	_, err := d.conn.Exec(`
+		INSERT INTO sessions (id, client_id, updated_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(id) DO UPDATE SET
+			client_id = excluded.client_id,
+			updated_at = CURRENT_TIMESTAMP
+	`, sessionID, clientID)
+	return err
+}
+
+func (d *DB) InsertSentence(sessionID, content, typ string) {
 	d.queue <- writeJob{
-		query: "INSERT INTO sentences (content, type) VALUES (?, ?)",
-		args:  []interface{}{content, typ},
+		query: "INSERT INTO sentences (session_id, content, type) VALUES (?, ?, ?)",
+		args:  []interface{}{sessionID, content, typ},
 	}
 }
 
-func (d *DB) InsertImage(prompt, base64Data string) {
+func (d *DB) InsertImage(sessionID, prompt, base64Data string) {
 	d.queue <- writeJob{
-		query: "INSERT INTO images (prompt, base64_data) VALUES (?, ?)",
-		args:  []interface{}{prompt, base64Data},
+		query: "INSERT INTO images (session_id, prompt, base64_data) VALUES (?, ?, ?)",
+		args:  []interface{}{sessionID, prompt, base64Data},
 	}
 }
 
