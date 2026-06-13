@@ -92,6 +92,7 @@ jobs:
 
             install -d -m 755 /opt/voxcanvas/backend
             install -d -m 755 /var/www/voxcanvas
+            install -d -m 755 /var/log/voxcanvas
             install -d -m 700 /etc/voxcanvas
             touch /etc/voxcanvas/backend.env
             chmod 600 /etc/voxcanvas/backend.env

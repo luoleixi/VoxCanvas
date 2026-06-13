@@ -3,13 +3,15 @@ package config
 import (
 	"log"
 	"os"
+
+	"voxcanvas/backend/internal/logger"
 )
 
 type Config struct {
 	LLMMode string
 
-	ChatAPIURL  string
-	ChatModel   string
+	ChatAPIURL string
+	ChatModel  string
 
 	ImageAPIURL string
 	ImageModel  string
@@ -37,7 +39,7 @@ func Load() *Config {
 	log.Printf("[CONFIG] CHAT_MODEL=%s", cfg.ChatModel)
 	log.Printf("[CONFIG] IMAGE_API_URL=%s", cfg.ImageAPIURL)
 	log.Printf("[CONFIG] IMAGE_MODEL=%s", cfg.ImageModel)
-	log.Printf("[CONFIG] API_KEY=%s", cfg.APIKey)
+	log.Printf("[CONFIG] API_KEY=%s", logger.MaskSecret(cfg.APIKey))
 
 	return cfg
 }

@@ -49,6 +49,7 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("[DRAW] intent client_id=%s session_id=%s op=%s", clientID, sessionID, intent.Op)
 
 	switch intent.Op {
 	case "requirement":
@@ -70,6 +71,7 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 		}); err != nil {
 			return nil, err
 		}
+		log.Printf("[DRAW] requirement_refined session_id=%s text_len=%d previous_image_id=%d", sessionID, len(refined), previousImageID)
 		return &model.DrawData{
 			Op:    "requirement",
 			Text:  refined,
@@ -78,6 +80,7 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 
 	case "generate_image":
 		prompt := s.Dev.Get(sessionID)
+		log.Printf("[DRAW] generate_image start session_id=%s prompt_len=%d previous_image_id=%d", sessionID, len(prompt), previousImageID)
 		base64Img, err := s.Generator.Generate(prompt)
 		if err != nil {
 			log.Printf("[DRAW] image gen skipped: %v, return prompt as content", err)
@@ -117,6 +120,7 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 		}); err != nil {
 			return nil, err
 		}
+		log.Printf("[DRAW] generate_image done session_id=%s image_id=%d image_len=%d", sessionID, imageID, len(base64Img))
 		s.Dev.Set(sessionID, "")
 		if err := s.setSessionDev(sessionID, ""); err != nil {
 			return nil, err
@@ -145,6 +149,7 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 		}); err != nil {
 			return nil, err
 		}
+		log.Printf("[DRAW] switch_session client_id=%s from_session_id=%s to_session_id=%s", clientID, sessionID, newSessionID)
 		return &model.DrawData{
 			Op:        "switch_session",
 			Text:      "",
@@ -154,10 +159,12 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 
 	case "undo":
 		if s.Generated == nil {
+			log.Printf("[DRAW] undo miss session_id=%s reason=no_generated_store", sessionID)
 			return &model.DrawData{Op: "undo", Text: "", Image: ""}, nil
 		}
 		result, ok := s.Generated.Get(sessionID)
 		if !ok {
+			log.Printf("[DRAW] undo miss session_id=%s reason=no_generated_result", sessionID)
 			return &model.DrawData{Op: "undo", Text: "", Image: ""}, nil
 		}
 		s.Dev.Set(sessionID, result.Text)
@@ -176,6 +183,7 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 		}); err != nil {
 			return nil, err
 		}
+		log.Printf("[DRAW] undo hit session_id=%s image_id=%d text_len=%d image_len=%d", sessionID, result.ImageID, len(result.Text), len(result.Image))
 		return &model.DrawData{
 			Op:    "undo",
 			Text:  result.Text,
@@ -202,6 +210,7 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 			}); err != nil {
 				return nil, err
 			}
+			log.Printf("[DRAW] clear session_id=%s before_dev_len=%d before_image_id=%d", sessionID, len(beforeDev), previousImageID)
 		}
 		return &model.DrawData{
 			Op:    intent.Op,

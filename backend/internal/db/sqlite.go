@@ -158,7 +158,7 @@ func ensureColumn(conn *sql.DB, table, column, definition string) error {
 func (d *DB) worker() {
 	for job := range d.queue {
 		if _, err := d.conn.Exec(job.query, job.args...); err != nil {
-			log.Printf("db write error: %v", err)
+			log.Printf("[DB] async_write_error err=%v query=%q", err, job.query)
 		}
 	}
 }
@@ -211,6 +211,7 @@ type SessionEvent struct {
 }
 
 func (d *DB) InsertSessionEvent(event SessionEvent) error {
+	log.Printf("[DB] session_event session_id=%s event_type=%s image_id=%d previous_image_id=%d", event.SessionID, event.EventType, event.ImageID, event.PreviousImageID)
 	_, err := d.conn.Exec(`
 		INSERT INTO session_events (
 			session_id,
