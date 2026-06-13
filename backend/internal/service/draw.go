@@ -53,7 +53,8 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 			return nil, err
 		}
 		if s.DB != nil {
-			if err := s.DB.RecordRequirementRefined(sessionID, db.SessionEvent{
+			title, summary := BuildSessionMeta(refined)
+			if err := s.DB.RecordRequirementRefined(sessionID, title, summary, db.SessionEvent{
 				SessionID:       sessionID,
 				EventType:       "requirement_refined",
 				SentenceID:      sentenceID,
@@ -93,7 +94,8 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 		}
 		var imageID int64
 		if s.DB != nil {
-			imageID, err = s.DB.RecordGeneratedImage(sessionID, prompt, base64Img, db.SessionEvent{
+			title, summary := BuildSessionMeta(prompt)
+			imageID, err = s.DB.RecordGeneratedImage(sessionID, prompt, base64Img, title, summary, db.SessionEvent{
 				SessionID:       sessionID,
 				EventType:       "image_generated",
 				SentenceID:      sentenceID,
@@ -167,7 +169,8 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 		}
 		s.Dev.Set(sessionID, result.Text)
 		if s.DB != nil {
-			if err := s.DB.RecordUndo(sessionID, result.Text, db.SessionEvent{
+			title, summary := BuildSessionMeta(result.Text)
+			if err := s.DB.RecordUndo(sessionID, result.Text, title, summary, db.SessionEvent{
 				SessionID:       sessionID,
 				EventType:       "undo",
 				SentenceID:      sentenceID,
