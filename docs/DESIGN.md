@@ -60,6 +60,8 @@
 | `summary` | 会话摘要 |
 | `current_image_id` | 当前会话正在展示或恢复的生成图 ID |
 | `undo_image_id` | 下一次撤销要返回的生成图 ID |
+| `current_version_id` | 当前会话状态对应的版本节点 ID |
+| `undo_version_id` | 下一次撤销要恢复的版本节点 ID |
 | `created_at` | 创建时间 |
 | `updated_at` | 最近更新时间 |
 
@@ -117,6 +119,20 @@
 | `clear` | 清空当前会话 |
 | `switch_session` | 切换到新会话 |
 
+### `session_versions`
+
+记录会话状态版本树。生成图片和清空都会创建版本节点，节点之间通过 `parent_id` 串成树。
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | 版本节点 ID |
+| `session_id` | 版本所属会话 |
+| `parent_id` | 父版本节点 ID；为空表示根版本 |
+| `event_type` | 产生该版本的事件类型，例如 `image_generated`、`clear` |
+| `image_id` | 当前版本对应的图片 ID；清空版本为空 |
+| `dev` | 当前版本对应的文本状态；清空版本为空 |
+| `created_at` | 创建时间 |
+
 ## 事务边界
 
 数据库写入采用同步事务封装，不再使用异步写入队列。后端会先完成意图识别、需求精炼、图片生成等外部模型调用，再把相关数据库变更放入同一个 SQLite 事务中提交，避免长时间持有数据库锁。
@@ -125,28 +141,28 @@
 | --- | --- |
 | 用户输入 | 写入 `sentences`，写入 `session_events(sentence)` |
 | 需求精炼 | 更新 `sessions.dev/title/summary`，写入 `session_events(requirement_refined)` |
-| 图片生成成功 | 写入 `images`，更新 `current_image_id/undo_image_id`，写入 `session_events(image_generated)`，清空 `sessions.dev` |
-| 撤销 | 查询 `undo_image_id` 对应图片，恢复 `sessions.dev/title/summary`，更新 `current_image_id/undo_image_id`，写入 `session_events(undo)` |
-| 清空 | 清空 `sessions.dev/title/summary/current_image_id`，将 `undo_image_id` 指向清空前图片，写入 `session_events(clear)` |
+| 图片生成成功 | 写入 `images`，创建 `session_versions(image_generated)` 节点，更新当前版本和撤销目标，写入 `session_events(image_generated)`，清空 `sessions.dev` |
+| 撤销 | 查询 `undo_version_id` 对应版本，恢复 `sessions.dev/title/summary/current_image_id/current_version_id`，前移撤销目标，写入 `session_events(undo)` |
+| 清空 | 创建 `session_versions(clear)` 节点，清空 `sessions.dev/title/summary/current_image_id`，将撤销目标指向清空前版本，写入 `session_events(clear)` |
 | 切换新会话 | 创建或更新新 `sessions`，写入 `session_events(switch_session)` |
 
 如果事务内任一写入失败，本次业务状态和事件日志都会一起回滚，避免出现状态与日志不一致。
 
-## 连续撤销
+## 版本树与连续撤销
 
-当前版本先不做带参数撤销。用户每次说“撤销”，都沿当前会话的生成图历史向前回退。
+当前版本先不做带参数撤销。用户每次说“撤销”，都沿当前会话版本树向父节点回退。
 
 实现摘要：
 
 1. 每次成功生成图片后，后端将图片写入 `images`。
-2. 同一事务内把 `sessions.current_image_id` 和 `sessions.undo_image_id` 更新为本次生成图 ID。
-3. 用户触发 `undo` 时，后端读取 `sessions.undo_image_id`。
-4. 根据 `undo_image_id` 查询 `images.prompt` 和 `images.base64_data`。
-5. 找到目标图后，后端返回该图的生成文本和 base64 图片。
-6. 同一事务内把该文本恢复到 `sessions.dev`，更新 `title/summary`。
-7. `sessions.current_image_id` 更新为本次返回的图片 ID。
-8. `sessions.undo_image_id` 前移到更早一张图片 ID。
-9. 如果没有更早图片，`undo_image_id` 置空；再次撤销返回空 `text/image`。
+2. 同一事务内创建 `session_versions(image_generated)`，其 `parent_id` 指向生成前的 `current_version_id`。
+3. 生成后，`sessions.current_version_id` 和 `sessions.undo_version_id` 都指向本次生成版本。
+4. 用户触发 `undo` 时，后端读取 `sessions.undo_version_id`。
+5. 如果目标版本是图片版本，后端根据 `image_id` 查询 `images.prompt` 和 `images.base64_data`，返回图片和文本。
+6. 如果目标版本是清空版本，后端恢复为空画布，返回空 `text/image`。
+7. 恢复完成后，`sessions.current_version_id` 更新为目标版本，`sessions.undo_version_id` 前移到目标版本的 `parent_id`。
+8. 如果没有父版本，再次撤销返回空 `text/image`。
+9. 撤销后如果再次生成图片，新图片版本会以当前版本为父节点，形成新的分支；旧分支不会被删除。
 10. 每次撤销都会写入 `session_events(undo)`。
 
 前端不需要传撤销参数，仍只发送：
@@ -165,16 +181,19 @@
 - 清空 `sessions.dev`
 - 清空 `sessions.title` 和 `sessions.summary`
 - 清空 `sessions.current_image_id`
-- 将 `sessions.undo_image_id` 指向清空前的当前图片
+- 创建 `session_versions(clear)` 节点，父节点指向清空前的当前版本
+- 将 `sessions.current_version_id` 指向清空版本
+- 将 `sessions.undo_version_id` 指向清空前的父版本
 - 写入 `session_events(clear)`
 
-清空不会删除 `images` 历史数据。这样用户清空后再次说“撤销”，后端可以根据 `undo_image_id` 找回清空前的图片和 prompt，并恢复：
+清空不会删除 `images` 历史数据，也不会删除旧版本节点。这样用户清空后再次说“撤销”，后端可以根据 `undo_version_id` 找回清空前的版本，并恢复：
 
 - 返回清空前图片的 `base64_data`
 - 返回清空前图片的 `prompt`
 - 将该 `prompt` 写回 `sessions.dev`
 - 将 `sessions.current_image_id` 恢复为该图片 ID
-- 将 `sessions.undo_image_id` 前移到更早一张图片
+- 将 `sessions.current_version_id` 恢复为清空前版本
+- 将 `sessions.undo_version_id` 前移到更早的父版本
 
 无数据库模式下，内存 `GeneratedStore` 会保留历史生成结果。清空只会把当前显示游标置空，不删除历史栈，因此后续撤销仍能恢复清空前结果。
 
@@ -229,7 +248,7 @@
 | 优先级 | 能力 | 说明 |
 | --- | --- | --- |
 | P0 | 事件日志 | 已具备基础事件表，继续作为撤销、回放、图生图来源追踪基础 |
-| P1 | 连续撤销 | 当前已支持按生成图历史连续撤销 |
+| P1 | 连续撤销 | 当前已支持按版本树连续撤销 |
 | P2 | 清空恢复 | 基于事件日志恢复清空前状态 |
 | P3 | 切回历史会话 | 基于 `title/summary` 和更新时间匹配目标会话 |
 | P4 | 带参数撤销 | 支持撤销到指定需求或指定图片 |
