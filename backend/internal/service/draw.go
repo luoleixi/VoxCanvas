@@ -136,9 +136,24 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 		}, nil
 
 	case "switch_session":
-		newSessionID := NewSessionID()
+		targetSessionID := ""
+		targetReason := "new_session"
+		if s.Sessions != nil {
+			target, err := s.Sessions.ResolveSwitchTarget(clientID, sessionID, sentence)
+			if err != nil {
+				return nil, err
+			}
+			if target != nil && target.Found {
+				targetSessionID = target.Session.SessionID
+				targetReason = target.Reason
+				s.Dev.Set(targetSessionID, target.Session.Dev)
+			}
+		}
+		if targetSessionID == "" {
+			targetSessionID = NewSessionID()
+		}
 		if s.DB != nil {
-			if err := s.DB.RecordSwitchSession(clientID, newSessionID, db.SessionEvent{
+			if err := s.DB.RecordSwitchSession(clientID, targetSessionID, db.SessionEvent{
 				SessionID:       sessionID,
 				EventType:       "switch_session",
 				SentenceID:      sentenceID,
@@ -151,16 +166,16 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 				return nil, err
 			}
 		} else if s.Sessions != nil {
-			if err := s.Sessions.Create(clientID, newSessionID); err != nil {
+			if err := s.Sessions.Create(clientID, targetSessionID); err != nil {
 				return nil, err
 			}
 		}
-		log.Printf("[DRAW] switch_session client_id=%s from_session_id=%s to_session_id=%s", clientID, sessionID, newSessionID)
+		log.Printf("[DRAW] switch_session client_id=%s from_session_id=%s to_session_id=%s reason=%s", clientID, sessionID, targetSessionID, targetReason)
 		return &model.DrawData{
 			Op:        "switch_session",
 			Text:      "",
 			Image:     "",
-			SessionID: newSessionID,
+			SessionID: targetSessionID,
 		}, nil
 
 	case "undo":

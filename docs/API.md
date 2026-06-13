@@ -167,7 +167,7 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
 | `generate_image` | 用户要求生成图片 |
 | `undo` | 用户要求撤销 |
 | `clear` | 用户要求清空当前会话 |
-| `switch_session` | 用户要求切换会话；当前版本表示新建并切换到一个新会话 |
+| `switch_session` | 用户要求切换会话；可切回历史会话，匹配不到时新建并切换到一个新会话 |
 | `unknown` | 无法识别的语音文本 |
 
 ## 7. 响应示例
@@ -248,7 +248,7 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
 
 ### 切换会话
 
-当前版本中，“切换会话”表示创建一个新会话并切换过去。后端会更新 `vox_session_id` Cookie。
+当前版本中，“切换会话”会先尝试在当前匿名用户的历史会话中匹配目标，例如“回到海边小屋”“打开上一个会话”。如果匹配成功，后端会把 `vox_session_id` 更新为历史会话 ID；如果匹配不到，后端会创建一个新会话并切换过去。
 
 ```json
 {
