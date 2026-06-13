@@ -6,6 +6,8 @@ After=network.target
 Type=simple
 WorkingDirectory=/opt/voxcanvas/backend
 Environment=PORT=6060
+Environment=LOG_DIR=/var/log/voxcanvas
+Environment=LOG_FILE=voxcanvas-backend.log
 EnvironmentFile=-/etc/voxcanvas/backend.env
 ExecStart=/opt/voxcanvas/backend/voxcanvas-backend
 Restart=always

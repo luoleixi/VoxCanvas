@@ -19,6 +19,7 @@ func Setup(drawSvc *service.DrawService, sessionSvc *service.SessionService) *gi
 	api := r.Group("/api/v1")
 	{
 		api.POST("/session/start", sessionH.Start)
+		api.GET("/session/list", sessionH.List)
 		api.POST("/draw/understand", drawH.Understand)
 	}
 
