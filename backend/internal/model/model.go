@@ -15,7 +15,8 @@ type DrawRequest struct {
 }
 
 type DrawData struct {
-	Op    string `json:"op"`
-	Text  string `json:"text"`
-	Image string `json:"image"`
+	Op        string `json:"op"`
+	Text      string `json:"text"`
+	Image     string `json:"image"`
+	SessionID string `json:"-"`
 }

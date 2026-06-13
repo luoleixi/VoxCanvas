@@ -24,7 +24,14 @@ func (h *DrawHandler) Understand(c *gin.Context) {
 		return
 	}
 
-	data, err := h.Svc.Handle(req.Sentences)
+	clientID := ensureClientID(c)
+	sessionID := currentSessionID(c)
+	if sessionID == "" {
+		sessionID = newSessionID()
+		setSessionID(c, sessionID)
+	}
+
+	data, err := h.Svc.Handle(clientID, sessionID, req.Sentences)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.Response{
 			Code: 500,
@@ -32,6 +39,9 @@ func (h *DrawHandler) Understand(c *gin.Context) {
 			Data: nil,
 		})
 		return
+	}
+	if data.Op == "switch_session" {
+		setSessionID(c, data.SessionID)
 	}
 
 	c.JSON(http.StatusOK, model.Response{

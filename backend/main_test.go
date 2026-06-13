@@ -20,13 +20,15 @@ func init() {
 }
 
 func testSetup() *gin.Engine {
+	sessionSvc := &service.SessionService{}
 	drawSvc := &service.DrawService{
 		Dev:        service.NewDevStore(),
+		Sessions:   sessionSvc,
 		Classifier: &llm.MockClassifier{},
 		Refiner:    &llm.MockRefiner{},
 		Generator:  &llm.MockGenerator{},
 	}
-	return router.Setup(drawSvc)
+	return router.Setup(drawSvc, sessionSvc)
 }
 
 func TestHealthHandler(t *testing.T) {
@@ -83,6 +85,14 @@ func TestSessionStartHandler(t *testing.T) {
 	if !strings.HasPrefix(sessionID, "sess_") {
 		t.Fatalf("expected session_id to start with sess_, got %s", sessionID)
 	}
+
+	if cookieValue(rec, "vox_client_id") == "" {
+		t.Fatal("expected vox_client_id cookie")
+	}
+
+	if got := cookieValue(rec, "vox_session_id"); got != sessionID {
+		t.Fatalf("expected vox_session_id cookie %s, got %s", sessionID, got)
+	}
 }
 
 func TestDrawUnderstandHandler(t *testing.T) {
@@ -96,6 +106,14 @@ func TestDrawUnderstandHandler(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	if cookieValue(rec, "vox_client_id") == "" {
+		t.Fatal("expected vox_client_id cookie")
+	}
+
+	if cookieValue(rec, "vox_session_id") == "" {
+		t.Fatal("expected vox_session_id cookie")
 	}
 
 	var resp model.Response
@@ -125,6 +143,41 @@ func TestDrawUnderstandHandler(t *testing.T) {
 	}
 }
 
+func TestDrawUnderstandSwitchSessionUpdatesCookie(t *testing.T) {
+	r := testSetup()
+
+	body := `{"sentences":"切换会话"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/draw/understand", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "vox_client_id", Value: "client_test"})
+	req.AddCookie(&http.Cookie{Name: "vox_session_id", Value: "sess_old"})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	var resp model.Response
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	data, ok := resp.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected data to be a map")
+	}
+
+	if data["op"] != "switch_session" {
+		t.Fatalf("expected switch_session op, got %v", data["op"])
+	}
+
+	newSessionID := cookieValue(rec, "vox_session_id")
+	if newSessionID == "" || newSessionID == "sess_old" {
+		t.Fatalf("expected new vox_session_id cookie, got %s", newSessionID)
+	}
+}
+
 func TestDrawUnderstandHandlerInvalidBody(t *testing.T) {
 	r := testSetup()
 
@@ -136,4 +189,13 @@ func TestDrawUnderstandHandlerInvalidBody(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d", rec.Code)
 	}
+}
+
+func cookieValue(rec *httptest.ResponseRecorder, name string) string {
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == name {
+			return cookie.Value
+		}
+	}
+	return ""
 }
