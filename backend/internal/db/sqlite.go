@@ -57,9 +57,6 @@ func Open(dataDir string) (*DB, error) {
 			base64_data TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
-		CREATE INDEX IF NOT EXISTS idx_sessions_client_id ON sessions(client_id);
-		CREATE INDEX IF NOT EXISTS idx_sentences_session_id ON sentences(session_id);
-		CREATE INDEX IF NOT EXISTS idx_images_session_id ON images(session_id);
 	`); err != nil {
 		return nil, err
 	}
@@ -73,6 +70,13 @@ func Open(dataDir string) (*DB, error) {
 		return nil, err
 	}
 	if err := ensureColumn(conn, "images", "session_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return nil, err
+	}
+	if _, err := conn.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_sessions_client_id ON sessions(client_id);
+		CREATE INDEX IF NOT EXISTS idx_sentences_session_id ON sentences(session_id);
+		CREATE INDEX IF NOT EXISTS idx_images_session_id ON images(session_id);
+	`); err != nil {
 		return nil, err
 	}
 
