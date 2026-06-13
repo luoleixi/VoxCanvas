@@ -109,6 +109,43 @@ func (s *SessionService) ResolveSwitchTarget(clientID, currentSessionID, sentenc
 	return &SwitchTarget{Found: false, Reason: "no_match"}, nil
 }
 
+func (s *SessionService) FormatHistoryForVoice(clientID, currentSessionID string, limit int) (string, []SessionSummary, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	sessions, err := s.List(clientID, limit+1)
+	if err != nil {
+		return "", nil, err
+	}
+
+	lines := make([]string, 0, limit)
+	items := make([]SessionSummary, 0, limit)
+	for _, session := range sessions {
+		if session.SessionID == currentSessionID {
+			continue
+		}
+		title := session.Title
+		if title == "" {
+			title = truncateRunes(firstNonEmpty(session.Summary, session.Dev), 18)
+		}
+		if title == "" {
+			title = "未命名会话"
+		}
+		summary := firstNonEmpty(session.Summary, session.Dev, "暂无摘要")
+		session.Title = title
+		session.Summary = summary
+		items = append(items, session)
+		lines = append(lines, fmt.Sprintf("%d. %s：%s", len(lines)+1, title, summary))
+		if len(lines) >= limit {
+			break
+		}
+	}
+	if len(lines) == 0 {
+		return "暂无历史会话。", []SessionSummary{}, nil
+	}
+	return "最近历史会话：\n" + strings.Join(lines, "\n"), items, nil
+}
+
 func BuildSessionMeta(text string) (string, string) {
 	summary := normalizeSessionText(text)
 	if summary == "" {
@@ -213,4 +250,14 @@ func truncateRunes(text string, limit int) string {
 		return string(runes[:limit])
 	}
 	return string(runes[:limit-3]) + "..."
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

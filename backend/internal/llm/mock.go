@@ -16,6 +16,9 @@ func (m *MockClassifier) Classify(sentence string) (*IntentResult, error) {
 		return &IntentResult{Op: "undo", Text: "", Image: ""}, nil
 	case containsAny(sentence, "清空", "全部删掉", "全部删除", "从头开始", "重新画"):
 		return &IntentResult{Op: "clear", Text: "", Image: ""}, nil
+	case containsAny(sentence, "展示历史", "查看历史", "显示历史", "列出历史", "最近会话", "有哪些会话", "读一下历史", "播报历史") &&
+		!containsAny(sentence, "打开", "回到", "切换", "切回", "返回"):
+		return &IntentResult{Op: "list_sessions", Text: "", Image: ""}, nil
 	case containsAny(sentence, "切换", "打开上一个", "回到", "历史会话", "历史记录"):
 		return &IntentResult{Op: "switch_session", Text: "", Image: ""}, nil
 	case containsAny(sentence, "生成图片", "生成图", "出图", "开始画", "帮我生成", "就按这个画"):

@@ -55,11 +55,12 @@ func (c *RealClient) Classify(sentence string) (*IntentResult, error) {
 - generate_image：用户要求生成图片、开始绘制、出图，例如生成图片、开始画吧、出图、帮我生成、就按这个画。
 - undo：用户要求撤销上一步、回退、恢复上一步，例如撤销、撤回刚才那步、回退一步、不要刚才的修改。
 - clear：用户要求清空当前画布或当前会话内容，例如清空、清空画布、全部删掉、从头开始、重新画。
+- list_sessions：用户要求展示、查看、播报历史会话，例如展示历史会话、查看最近会话、有哪些会话、读一下历史作品。
 - switch_session：用户要求切换、打开、返回某个历史会话，例如切换会话、打开上一个会话、回到刚才那个作品、切换到海边小屋那张。
 - unknown：无法识别，或用户输入与绘图控制无关。
 
 返回格式固定为：
-{"op":"requirement|generate_image|undo|clear|switch_session|unknown","text":"","image":""}
+{"op":"requirement|generate_image|undo|clear|list_sessions|switch_session|unknown","text":"","image":""}
 
 字段规则：
 1. op 必须是上面的枚举值之一。
@@ -71,10 +72,12 @@ func (c *RealClient) Classify(sentence string) (*IntentResult, error) {
 2. 明确要求生成图片、出图、开始画，返回 generate_image。
 3. 撤销、回退、不要刚才那步，返回 undo。
 4. 清空、全部删除、重新开始当前作品，返回 clear。
-5. 切换、打开、回到某个历史会话，返回 switch_session。
-6. 如果一句话同时包含切换会话和其他绘图需求，以 switch_session 为主。
-7. 如果一句话同时包含绘图需求和生成图片，以 generate_image 为主，text 仍返回空字符串。
-8. 不确定时返回 unknown。
+5. 展示、查看、播报历史会话列表，返回 list_sessions。
+6. 切换、打开、回到某个历史会话，返回 switch_session。
+7. 如果一句话同时包含展示历史会话和切换到某个历史会话，以 switch_session 为主。
+8. 如果一句话同时包含切换会话和其他绘图需求，以 switch_session 为主。
+9. 如果一句话同时包含绘图需求和生成图片，以 generate_image 为主，text 仍返回空字符串。
+10. 不确定时返回 unknown。
 
 请严格只输出一行 JSON，不要使用 markdown 代码块，不要解释。`
 
