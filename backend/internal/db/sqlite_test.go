@@ -71,3 +71,38 @@ func TestRecordSentenceWritesSentenceAndEventInTransaction(t *testing.T) {
 		t.Fatalf("expected 1 sentence event, got %d", count)
 	}
 }
+
+func TestSessionTitleSummaryAreUpdatedAndListed(t *testing.T) {
+	dir := t.TempDir()
+	database, err := Open(dir)
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer database.Close()
+
+	if err := database.UpsertSession("client_test", "sess_test"); err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	if err := database.RecordRequirementRefined("sess_test", "月光下的猫", "月光下的猫坐在森林里", SessionEvent{
+		SessionID: "sess_test",
+		EventType: "requirement_refined",
+		Dev:       "月光下的猫坐在森林里",
+	}); err != nil {
+		t.Fatalf("failed to record requirement refined: %v", err)
+	}
+
+	sessions, err := database.ListSessionsByClient("client_test", 20)
+	if err != nil {
+		t.Fatalf("failed to list sessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+	if sessions[0].Title != "月光下的猫" {
+		t.Fatalf("expected title to be updated, got %q", sessions[0].Title)
+	}
+	if sessions[0].Summary != "月光下的猫坐在森林里" {
+		t.Fatalf("expected summary to be updated, got %q", sessions[0].Summary)
+	}
+}

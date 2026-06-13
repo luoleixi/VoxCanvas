@@ -113,6 +113,45 @@ Set-Cookie: vox_session_id=sess_20260613_235959123; HttpOnly; SameSite=Lax; Path
 | --- | --- | --- |
 | `data.session_id` | string | 新创建并切换到的会话 ID |
 
+### `GET /api/v1/session/list`
+
+查询当前匿名用户 `vox_client_id` 下的历史会话摘要，默认返回最近 20 条。该接口用于后续“切回历史会话”前的候选匹配，也便于验证会话隔离。
+
+请求：
+
+```http
+GET /api/v1/session/list?limit=20
+Cookie: vox_client_id=client_xxx
+```
+
+响应：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": [
+    {
+      "session_id": "sess_20260613_235959_abcd1234",
+      "title": "海边小屋",
+      "summary": "夕阳下的海边小屋，天空有几只海鸥",
+      "dev": "夕阳下的海边小屋，天空有几只海鸥",
+      "updated_at": "2026-06-13 23:59:59"
+    }
+  ]
+}
+```
+
+字段说明：
+
+| 字段 | 说明 |
+| --- | --- |
+| `session_id` | 会话 ID |
+| `title` | 会话标题，由当前精炼后的绘图文本自动截取生成 |
+| `summary` | 会话摘要，由当前精炼后的绘图文本自动截取生成 |
+| `dev` | 当前会话尚未出图的精炼文本，出图成功或清空后可能为空 |
+| `updated_at` | 最近更新时间 |
+
 #### curl 示例
 
 ```bash
@@ -331,7 +370,7 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
 | 字段 | 说明 |
 | --- | --- |
 | `title` | 会话标题，可由第一次需求或最终提示词生成 |
-| `preview` | 会话摘要，用于语音匹配和前端展示 |
+| `summary` | 会话摘要，用于语音匹配和前端展示 |
 | `updated_at` | 最近更新时间，用于“上一个”“最近一个”等语音指令 |
 
 示例会话摘要：
@@ -340,7 +379,7 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
 {
   "session_id": "sess_20260613_235959123",
   "title": "海边小屋",
-  "preview": "夕阳下的海边小屋，天空有几只海鸥",
+  "summary": "夕阳下的海边小屋，天空有几只海鸥",
   "updated_at": "2026-06-13T23:59:59+08:00"
 }
 ```
@@ -379,6 +418,8 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
 | `id` | 会话 ID |
 | `client_id` | 匿名用户标识 |
 | `dev` | 当前会话精炼后的绘图需求文本 |
+| `title` | 会话标题，用于历史会话候选展示和语音匹配 |
+| `summary` | 会话摘要，用于历史会话候选展示和语义匹配 |
 | `created_at` | 创建时间 |
 | `updated_at` | 最近更新时间 |
 
@@ -545,7 +586,7 @@ CREATE TABLE session_events (
 | 优先级 | 能力 | 说明 |
 | --- | --- | --- |
 | P0 | `session_events` 事件日志 | 作为多步撤销、清空恢复、历史回放、图生图来源追踪的基础 |
-| P1 | 会话标题与摘要 | 在 `sessions` 中增加 `title`、`preview`，支持“打开海边小屋那张”等语音匹配 |
+| P1 | 会话标题与摘要 | 在 `sessions` 中增加 `title`、`summary`，支持“打开海边小屋那张”等语音匹配 |
 | P2 | 完整撤销能力 | 支持撤销到上一次需求、上一次图片、第 N 次需求、第 N 次图片，以及清空后恢复 |
 | P3 | 切回历史会话 | 基于会话摘要和事件历史，支持切回上一个会话、最近会话或指定主题会话 |
 | P4 | 图生图 | 使用当前会话最近生成图或指定历史图作为 source image，根据语音需求生成新图 |

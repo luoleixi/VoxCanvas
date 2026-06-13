@@ -33,6 +33,8 @@ func Open(dataDir string) (*DB, error) {
 			id TEXT PRIMARY KEY,
 			client_id TEXT NOT NULL,
 			dev TEXT NOT NULL DEFAULT '',
+			title TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -73,6 +75,12 @@ func Open(dataDir string) (*DB, error) {
 	if err := ensureColumn(conn, "sessions", "dev", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return nil, err
 	}
+	if err := ensureColumn(conn, "sessions", "title", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return nil, err
+	}
+	if err := ensureColumn(conn, "sessions", "summary", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return nil, err
+	}
 	if err := ensureColumn(conn, "sentences", "previous_image_id", "INTEGER"); err != nil {
 		return nil, err
 	}
@@ -102,6 +110,7 @@ func Open(dataDir string) (*DB, error) {
 	}
 	if _, err := conn.Exec(`
 		CREATE INDEX IF NOT EXISTS idx_sessions_client_id ON sessions(client_id);
+		CREATE INDEX IF NOT EXISTS idx_sessions_client_updated ON sessions(client_id, updated_at);
 		CREATE INDEX IF NOT EXISTS idx_sentences_session_id ON sentences(session_id);
 		CREATE INDEX IF NOT EXISTS idx_images_session_id ON images(session_id);
 		CREATE INDEX IF NOT EXISTS idx_session_events_session_id ON session_events(session_id);
@@ -156,6 +165,12 @@ func (d *DB) UpdateSessionDev(sessionID, dev string) error {
 	})
 }
 
+func (d *DB) UpdateSessionMeta(sessionID, title, summary string) error {
+	return d.withTx(func(tx *sql.Tx) error {
+		return updateSessionMetaTx(tx, sessionID, title, summary)
+	})
+}
+
 func (d *DB) RecordSentence(sessionID string, previousImageID int64, content, typ, beforeDev string) (int64, error) {
 	var sentenceID int64
 	err := d.withTx(func(tx *sql.Tx) error {
@@ -177,16 +192,19 @@ func (d *DB) RecordSentence(sessionID string, previousImageID int64, content, ty
 	return sentenceID, err
 }
 
-func (d *DB) RecordRequirementRefined(sessionID string, event SessionEvent) error {
+func (d *DB) RecordRequirementRefined(sessionID, title, summary string, event SessionEvent) error {
 	return d.withTx(func(tx *sql.Tx) error {
 		if err := updateSessionDevTx(tx, sessionID, event.Dev); err != nil {
+			return err
+		}
+		if err := updateSessionMetaTx(tx, sessionID, title, summary); err != nil {
 			return err
 		}
 		return insertSessionEventTx(tx, event)
 	})
 }
 
-func (d *DB) RecordGeneratedImage(sessionID, prompt, base64Data string, event SessionEvent) (int64, error) {
+func (d *DB) RecordGeneratedImage(sessionID, prompt, base64Data, title, summary string, event SessionEvent) (int64, error) {
 	var imageID int64
 	err := d.withTx(func(tx *sql.Tx) error {
 		var err error
@@ -198,14 +216,20 @@ func (d *DB) RecordGeneratedImage(sessionID, prompt, base64Data string, event Se
 		if err := insertSessionEventTx(tx, event); err != nil {
 			return err
 		}
+		if err := updateSessionMetaTx(tx, sessionID, title, summary); err != nil {
+			return err
+		}
 		return updateSessionDevTx(tx, sessionID, "")
 	})
 	return imageID, err
 }
 
-func (d *DB) RecordUndo(sessionID, dev string, event SessionEvent) error {
+func (d *DB) RecordUndo(sessionID, dev, title, summary string, event SessionEvent) error {
 	return d.withTx(func(tx *sql.Tx) error {
 		if err := updateSessionDevTx(tx, sessionID, dev); err != nil {
+			return err
+		}
+		if err := updateSessionMetaTx(tx, sessionID, title, summary); err != nil {
 			return err
 		}
 		return insertSessionEventTx(tx, event)
@@ -215,6 +239,9 @@ func (d *DB) RecordUndo(sessionID, dev string, event SessionEvent) error {
 func (d *DB) RecordClear(sessionID string, event SessionEvent) error {
 	return d.withTx(func(tx *sql.Tx) error {
 		if err := updateSessionDevTx(tx, sessionID, ""); err != nil {
+			return err
+		}
+		if err := updateSessionMetaTx(tx, sessionID, "", ""); err != nil {
 			return err
 		}
 		return insertSessionEventTx(tx, event)
@@ -240,6 +267,44 @@ type SessionEvent struct {
 	Dev             string
 	BeforeDev       string
 	BeforeImageID   int64
+}
+
+type SessionSummary struct {
+	SessionID string
+	Title     string
+	Summary   string
+	Dev       string
+	UpdatedAt string
+}
+
+func (d *DB) ListSessionsByClient(clientID string, limit int) ([]SessionSummary, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := d.conn.Query(`
+		SELECT id, title, summary, dev, updated_at
+		FROM sessions
+		WHERE client_id = ?
+		ORDER BY updated_at DESC
+		LIMIT ?
+	`, clientID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	sessions := make([]SessionSummary, 0)
+	for rows.Next() {
+		var session SessionSummary
+		if err := rows.Scan(&session.SessionID, &session.Title, &session.Summary, &session.Dev, &session.UpdatedAt); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, session)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return sessions, nil
 }
 
 func (d *DB) InsertSessionEvent(event SessionEvent) error {
@@ -278,6 +343,15 @@ func updateSessionDevTx(tx *sql.Tx, sessionID, dev string) error {
 		SET dev = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`, dev, sessionID)
+	return err
+}
+
+func updateSessionMetaTx(tx *sql.Tx, sessionID, title, summary string) error {
+	_, err := tx.Exec(`
+		UPDATE sessions
+		SET title = ?, summary = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, title, summary, sessionID)
 	return err
 }
 

@@ -10,6 +10,14 @@ type SessionData struct {
 	SessionID string `json:"session_id"`
 }
 
+type SessionSummaryData struct {
+	SessionID string `json:"session_id"`
+	Title     string `json:"title"`
+	Summary   string `json:"summary"`
+	Dev       string `json:"dev"`
+	UpdatedAt string `json:"updated_at"`
+}
+
 type DrawRequest struct {
 	Sentences string `json:"sentences"`
 }
