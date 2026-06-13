@@ -31,7 +31,10 @@ func (s *GeneratedStore) Get(sessionID string) (GeneratedResult, bool) {
 		return GeneratedResult{}, false
 	}
 	index, ok := s.currentIndex[sessionID]
-	if !ok || index < 0 || index >= len(results) {
+	if ok && index < 0 {
+		return GeneratedResult{}, false
+	}
+	if !ok || index >= len(results) {
 		index = len(results) - 1
 	}
 	return results[index], true
@@ -68,7 +71,15 @@ func (s *GeneratedStore) UndoPrevious(sessionID string) (GeneratedResult, bool) 
 func (s *GeneratedStore) Clear(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.data, sessionID)
-	delete(s.currentIndex, sessionID)
-	delete(s.undoIndex, sessionID)
+	results := s.data[sessionID]
+	if len(results) == 0 {
+		delete(s.data, sessionID)
+		delete(s.currentIndex, sessionID)
+		delete(s.undoIndex, sessionID)
+		return
+	}
+	s.currentIndex[sessionID] = -1
+	if _, ok := s.undoIndex[sessionID]; !ok {
+		s.undoIndex[sessionID] = len(results) - 1
+	}
 }

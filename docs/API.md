@@ -232,6 +232,8 @@ Cookie: vox_client_id=client_xxx; vox_session_id=sess_xxx
 
 ### 清空当前会话
 
+清空会移除当前画布展示和当前精炼文本。清空后再次说“撤销”，后端会尝试恢复清空前的上一张生成图及其文本。实现细节见 [DESIGN.md#清空](./DESIGN.md#清空)。
+
 ```json
 {
   "code": 200,
