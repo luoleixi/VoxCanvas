@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -27,6 +28,7 @@ func (h *SessionHandler) Start(c *gin.Context) {
 		}
 	}
 	setSessionID(c, sessionID)
+	log.Printf("[SESSION] start client_id=%s session_id=%s", clientID, sessionID)
 
 	c.JSON(http.StatusOK, model.Response{
 		Code: 200,

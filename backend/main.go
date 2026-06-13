@@ -11,6 +11,7 @@ import (
 	"voxcanvas/backend/internal/config"
 	"voxcanvas/backend/internal/db"
 	"voxcanvas/backend/internal/llm"
+	"voxcanvas/backend/internal/logger"
 	"voxcanvas/backend/internal/router"
 	"voxcanvas/backend/internal/service"
 )
@@ -31,6 +32,12 @@ type voiceResponseData struct {
 }
 
 func main() {
+	logFile, err := logger.Init(envOrDefault("LOG_DIR", "logs"), envOrDefault("LOG_FILE", "voxcanvas-backend.log"))
+	if err != nil {
+		log.Fatalf("failed to initialize logger: %v", err)
+	}
+	defer logFile.Close()
+
 	cfg := config.Load()
 
 	database, err := db.Open("data")
