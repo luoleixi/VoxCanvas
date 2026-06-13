@@ -44,6 +44,7 @@ func Open(dataDir string) (*DB, error) {
 		CREATE TABLE IF NOT EXISTS sentences (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id TEXT NOT NULL DEFAULT '',
+			previous_image_id INTEGER,
 			content TEXT NOT NULL,
 			type TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -62,6 +63,9 @@ func Open(dataDir string) (*DB, error) {
 		return nil, err
 	}
 	if err := ensureColumn(conn, "sentences", "session_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return nil, err
+	}
+	if err := ensureColumn(conn, "sentences", "previous_image_id", "INTEGER"); err != nil {
 		return nil, err
 	}
 	if err := ensureColumn(conn, "images", "session_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
@@ -126,18 +130,19 @@ func (d *DB) UpsertSession(clientID, sessionID string) error {
 	return err
 }
 
-func (d *DB) InsertSentence(sessionID, content, typ string) {
+func (d *DB) InsertSentence(sessionID string, previousImageID int64, content, typ string) {
 	d.queue <- writeJob{
-		query: "INSERT INTO sentences (session_id, content, type) VALUES (?, ?, ?)",
-		args:  []interface{}{sessionID, content, typ},
+		query: "INSERT INTO sentences (session_id, previous_image_id, content, type) VALUES (?, NULLIF(?, 0), ?, ?)",
+		args:  []interface{}{sessionID, previousImageID, content, typ},
 	}
 }
 
-func (d *DB) InsertImage(sessionID, prompt, base64Data string) {
-	d.queue <- writeJob{
-		query: "INSERT INTO images (session_id, prompt, base64_data) VALUES (?, ?, ?)",
-		args:  []interface{}{sessionID, prompt, base64Data},
+func (d *DB) InsertImage(sessionID, prompt, base64Data string) (int64, error) {
+	result, err := d.conn.Exec("INSERT INTO images (session_id, prompt, base64_data) VALUES (?, ?, ?)", sessionID, prompt, base64Data)
+	if err != nil {
+		return 0, err
 	}
+	return result.LastInsertId()
 }
 
 func (d *DB) Close() error {

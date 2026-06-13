@@ -10,6 +10,7 @@ import (
 
 type DrawService struct {
 	Dev        *DevStore
+	Generated  *GeneratedStore
 	Sessions   *SessionService
 	Classifier llm.Classifier
 	Refiner    llm.Refiner
@@ -23,8 +24,14 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 			return nil, err
 		}
 	}
+	var previousImageID int64
+	if s.Generated != nil {
+		if result, ok := s.Generated.Get(sessionID); ok {
+			previousImageID = result.ImageID
+		}
+	}
 	if s.DB != nil {
-		s.DB.InsertSentence(sessionID, sentence, "user_input")
+		s.DB.InsertSentence(sessionID, previousImageID, sentence, "user_input")
 	}
 
 	intent, err := s.Classifier.Classify(sentence)
@@ -56,8 +63,19 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 				Image: "",
 			}, nil
 		}
+		var imageID int64
 		if s.DB != nil {
-			s.DB.InsertImage(sessionID, prompt, base64Img)
+			imageID, err = s.DB.InsertImage(sessionID, prompt, base64Img)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if s.Generated != nil {
+			s.Generated.Set(sessionID, GeneratedResult{
+				ImageID: imageID,
+				Text:    prompt,
+				Image:   base64Img,
+			})
 		}
 		s.Dev.Set(sessionID, "")
 		return &model.DrawData{
@@ -80,9 +98,27 @@ func (s *DrawService) Handle(clientID, sessionID, sentence string) (*model.DrawD
 			SessionID: newSessionID,
 		}, nil
 
-	case "undo", "clear", "unknown":
+	case "undo":
+		if s.Generated == nil {
+			return &model.DrawData{Op: "undo", Text: "", Image: ""}, nil
+		}
+		result, ok := s.Generated.Get(sessionID)
+		if !ok {
+			return &model.DrawData{Op: "undo", Text: "", Image: ""}, nil
+		}
+		s.Dev.Set(sessionID, result.Text)
+		return &model.DrawData{
+			Op:    "undo",
+			Text:  result.Text,
+			Image: result.Image,
+		}, nil
+
+	case "clear", "unknown":
 		if intent.Op == "clear" {
 			s.Dev.Set(sessionID, "")
+			if s.Generated != nil {
+				s.Generated.Clear(sessionID)
+			}
 		}
 		return &model.DrawData{
 			Op:    intent.Op,

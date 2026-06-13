@@ -23,6 +23,7 @@ func testSetup() *gin.Engine {
 	sessionSvc := &service.SessionService{}
 	drawSvc := &service.DrawService{
 		Dev:        service.NewDevStore(),
+		Generated:  service.NewGeneratedStore(),
 		Sessions:   sessionSvc,
 		Classifier: &llm.MockClassifier{},
 		Refiner:    &llm.MockRefiner{},
@@ -175,6 +176,73 @@ func TestDrawUnderstandSwitchSessionUpdatesCookie(t *testing.T) {
 	newSessionID := cookieValue(rec, "vox_session_id")
 	if newSessionID == "" || newSessionID == "sess_old" {
 		t.Fatalf("expected new vox_session_id cookie, got %s", newSessionID)
+	}
+}
+
+func TestDrawUnderstandUndoReturnsLastGeneratedResult(t *testing.T) {
+	r := testSetup()
+
+	cookies := []*http.Cookie{
+		{Name: "vox_client_id", Value: "client_test"},
+		{Name: "vox_session_id", Value: "sess_test"},
+	}
+
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/draw/understand", strings.NewReader(`{"sentences":"画一只猫"}`))
+	req1.Header.Set("Content-Type", "application/json")
+	for _, cookie := range cookies {
+		req1.AddCookie(cookie)
+	}
+	rec1 := httptest.NewRecorder()
+	r.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("expected requirement status 200, got %d", rec1.Code)
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/draw/understand", strings.NewReader(`{"sentences":"生成图片"}`))
+	req2.Header.Set("Content-Type", "application/json")
+	for _, cookie := range cookies {
+		req2.AddCookie(cookie)
+	}
+	rec2 := httptest.NewRecorder()
+	r.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected generate status 200, got %d", rec2.Code)
+	}
+
+	var genResp model.Response
+	if err := json.Unmarshal(rec2.Body.Bytes(), &genResp); err != nil {
+		t.Fatalf("failed to unmarshal generate response: %v", err)
+	}
+	genData := genResp.Data.(map[string]interface{})
+	generatedImage, _ := genData["image"].(string)
+	if generatedImage == "" {
+		t.Fatal("expected generated image")
+	}
+
+	req3 := httptest.NewRequest(http.MethodPost, "/api/v1/draw/understand", strings.NewReader(`{"sentences":"撤销"}`))
+	req3.Header.Set("Content-Type", "application/json")
+	for _, cookie := range cookies {
+		req3.AddCookie(cookie)
+	}
+	rec3 := httptest.NewRecorder()
+	r.ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusOK {
+		t.Fatalf("expected undo status 200, got %d", rec3.Code)
+	}
+
+	var undoResp model.Response
+	if err := json.Unmarshal(rec3.Body.Bytes(), &undoResp); err != nil {
+		t.Fatalf("failed to unmarshal undo response: %v", err)
+	}
+	undoData := undoResp.Data.(map[string]interface{})
+	if undoData["op"] != "undo" {
+		t.Fatalf("expected undo op, got %v", undoData["op"])
+	}
+	if undoData["text"] == "" {
+		t.Fatal("expected undo text")
+	}
+	if undoData["image"] != generatedImage {
+		t.Fatal("expected undo to return last generated image")
 	}
 }
 
